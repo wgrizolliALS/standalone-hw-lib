@@ -6,10 +6,45 @@ from datetime import datetime
 from ophyd import Device, Signal
 
 class LabJackT8(Device):
-    def __init__(self, name, channels:list[int] | int | None=None, handle:str| None=None,
+    """
+    A self-contained Ophyd device for the LabJack T8.
+    It handles:
+    1. Hardware Connection (LJM)
+    2. Asynchronous Triggering (Threading)
+    3. Data Processing (Averaging for Bluesky)
+    4. Data Logging (Self-contained CSV saving for Raw Data)  
+
+    Parameters
+    ---------- 
+
+    name : str
+        The name of the device for Ophyd/Bluesky.
+    channels : list[int] | int | None, optional
+        List of AIN channel indices to read (e.g., [0, 1] for AIN0 and AIN1).
+    handle : str | None, optional
+        An existing LJM handle. If None, a new connection is opened.
+    act_time : float, optional
+        The duration of the stream acquisition in seconds. Default is 0.5s.
+    sample_rate : float, optional
+        The sampling frequency in Hz. Default is 20.0 Hz.
+    connectionType : str, optional
+        LJM connection type (e.g., "USB", "ETHERNET", "ANY").
+    identifier : str, optional
+        LJM identifier (e.g., "ANY", or a specific serial number).
+    csv_fname : str | None, optional
+        Optional filename for the raw data CSV export.
+        
+    """
+
+
+    def __init__(self, name, channels:list[int] | int | None=None,
+                 handle:str| None=None,
                  act_time:float=0.5, sample_rate:float=20.0,
                  connectionType:str="ANY", identifier:str="ANY", 
-                 csv_fname:str| None = None, **kwargs):
+                 csv_fname:str| None = None, 
+                 verbose:bool = False,
+                 **kwargs):
+
         
         super().__init__(name=name, **kwargs)
         if isinstance(channels, (int, float)):
@@ -24,6 +59,8 @@ class LabJackT8(Device):
         self._csv_file = None
         self._csv_writer = None
         self.csv_fname = csv_fname
+
+        self.verbose = verbose
 
         self.act_time = act_time
         self.sample_rate = sample_rate
@@ -40,9 +77,13 @@ class LabJackT8(Device):
         try:
             self.handle = handle or ljm.openS("T8", connectionType, identifier)
             self.ljm_module = ljm
-            print("--- Connected to LabJack T8 ---")
+            if self.verbose:
+                print("[STATUS] Succesfully Connected to LabJack T8")
+                info = ljm.getHandleInfo(self.handle)
+                print(f"[INFO] Connected Device: {info[0]}, Connection: {info[1]}, Serial: {info[2]}, IP: {info[3]}, Port: {info[4]}\n")
         except Exception as e:
-            raise RuntimeError(f"LJM Connection FAILED: {e}")
+            self.close()
+            raise RuntimeError(f"[ERROR] LJM Connection FAILED: {e}")
 
     @property
     def hints(self):
@@ -54,6 +95,8 @@ class LabJackT8(Device):
         scans_per_read = int(scan_rate * self.act_time)
         
         def _worker():
+            if self.verbose:
+                    print(f"[INFO] {datetime.now()}: Aquisition STARTED.")
             try:
                 aAddresses = self.ljm_module.namesToAddresses(len(self.channel_names), self.channel_names)[0]
                 actual_rate = self.ljm_module.eStreamStart(self.handle, scans_per_read, len(aAddresses), aAddresses, scan_rate)
@@ -78,8 +121,13 @@ class LabJackT8(Device):
                 except Exception:
                     arr = np.array(samples, dtype=object)
                 self.raw_block.put(arr)
+
+                if self.verbose:
+                    print(f"[INFO] {datetime.now()}: Aquisition FINISHED.")
+                    print(f'[INFO] Acquired {len(reshaped)} samples from {num_channels} channels at {actual_rate:} Hz.\n')
+
             except Exception as e:
-                print(f"STREAM ERROR: {e}")
+                print(f"[STREAM ERROR] : {e}")
                 try:
                     self.ljm_module.eStreamStop(self.handle)
                 except:
@@ -148,4 +196,4 @@ class LabJackT8(Device):
     def close(self):
         if hasattr(self, 'handle') and self.handle:
             self.ljm_module.close(self.handle)
-            print("LabJack connection closed.")
+            print("[INFO] LabJack connection closed.")
