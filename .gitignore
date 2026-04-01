@@ -17,5 +17,5 @@
 !**/*.ico
 
 # Override: Specifically ignore these folders and all their contents
-gitIgnored/**
-BKP/**
+gitIgnored/
+BKP/
