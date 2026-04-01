@@ -5,14 +5,14 @@ installed and that the system can communicate with the hardware.
 '''
 
 # After running 'pip install -e .', you can import directly from the modules in src/
-from labjack_utils import detect_labjacks, print_devices
+import labjack_utils as lju 
 
 if __name__ == "__main__":
       
       print('\n### Scan for LabJacks ###')
-      devices = detect_labjacks()
+      devices = lju.detect_labjacks()
       print('# Scan ENDED #\n')
       if devices:
             print(f"Found {len(devices)} device(s):")
-            print_devices(devices)
+            lju.print_devices(devices)
       print('\n')
