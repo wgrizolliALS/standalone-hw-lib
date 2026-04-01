@@ -1,0 +1,21 @@
+# Start by ignoring everything.
+*
+
+# Then, un-ignore all directories. This is the key to letting Git
+# traverse into subdirectories.
+!*/
+
+# Now, specify the files you want to keep.
+!.git*
+!requirements.txt
+!environment.yml
+!LICENSE
+!**/*.py
+!**/*.md
+!**/*.ini
+!**/*.png
+!**/*.ico
+
+# Override: Specifically ignore these folders and all their contents
+gitIgnored/**
+BKP/**
