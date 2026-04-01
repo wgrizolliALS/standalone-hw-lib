@@ -16,20 +16,22 @@ Make sure to have the LabJack LJM library installed and a compatible LabJack dev
 
 """
 
-
 # %%
 from labjack import ljm
 import numpy as np
 import time
 
-print('\n### labjack python library version: ' + ljm.__version__ + ' ###\n')
+print("\n### labjack python library version: " + ljm.__version__ + " ###\n")
 
 # %% List devices
 
+print("### Searching for connected Devices...")
 res = ljm.listAllS("ANY", "ANY")
 print("Devices found:")
 for i in range(res[0]):
-    print(f"Device {i}: {res[1][i]}, Connection: {res[2][i]}, Serial: {res[3][i]}, IP: {res[4][i]},")
+    print(
+        f"Device {i}: {res[1][i]}, Connection: {res[2][i]}, Serial: {res[3][i]}, IP: {res[4][i]},"
+    )
 
 # %% Open first device
 
@@ -43,7 +45,9 @@ except Exception as e:
 try:
     info = ljm.getHandleInfo(handle)
     print("\nHandle info:")
-    print(f"Device type: {info[0]}, Connection: {info[1]}, Serial: {info[2]}, IP: {info[3]}, Port: {info[4]}")
+    print(
+        f"Device type: {info[0]}, Connection: {info[1]}, Serial: {info[2]}, IP: {info[3]}, Port: {info[4]}"
+    )
 except Exception as e:
     print("Failed getHandleInfo:", e)
     ljm.close(handle)
@@ -51,12 +55,12 @@ except Exception as e:
 
 # %% Acquisition
 # ----- Acquisition parameters -----
-num_samples = 40_000        # total scans you want
-sample_rate = 40_000        # Hz, ma
-channels = ["AIN0", "AIN1", "AIN2", "AIN4", "AIN5"] 
+num_samples = 40_000  # total scans you want
+sample_rate = 40_000  # Hz, ma
+channels = ["AIN0", "AIN1", "AIN2", "AIN4", "AIN5"]
 # channels = ["AIN0"]  # use names to avoid ambiguity
-scans_per_read = 256       # chunk size per eStreamRead (reasonable default)
-timeout_sec = 5.0         # safety timeout for acquisition
+scans_per_read = 256  # chunk size per eStreamRead (reasonable default)
+timeout_sec = 5.0  # safety timeout for acquisition
 # ----------------------------------
 
 try:
@@ -74,18 +78,18 @@ try:
     all_flat = []
     start_t = time.time()
     scan_interval = 1.0 / actual_rate  # time between scans in seconds
-    
+
     while True:
         # Check completion conditions
         scans_collected = len(all_flat) // num_ch
         if scans_collected >= num_samples:
             break
-        
+
         elapsed = time.time() - start_t
         if elapsed >= timeout_sec:
             print(f"Timeout reached ({elapsed:.2f}s)")
             break
-        
+
         # Read and accumulate data
         ret = ljm.eStreamRead(handle)
         if ret and ret[0]:
@@ -101,7 +105,7 @@ try:
     n_rows = flat.size // num_ch
     if n_rows == 0:
         raise RuntimeError("No complete scans received.")
-    flat = flat[:n_rows * num_ch]
+    flat = flat[: n_rows * num_ch]
     data = flat.reshape(n_rows, num_ch)
 
     # If you asked for a specific total, trim/keep only the requested scans
@@ -110,11 +114,11 @@ try:
 
     # Generate timestamps for each scan
     times = np.arange(data.shape[0]) * scan_interval
-    
+
     # Combine times with data
     data = np.hstack([times.reshape(-1, 1), data])
 
-    print(f"Collected {data.shape[0]} scans × {data.shape[1]-1} channels (+ time column)")
+    print(f"Collected {data.shape[0]} scans × {data.shape[1] - 1} channels (+ time column)")
     print(f"Time range: {times[0]:.6f} to {times[-1]:.6f} seconds (session time)")
     print(data[:10])  # preview first 10 rows
 
@@ -129,12 +133,14 @@ except Exception as e:
 
 # %% Close connection
 try:
-      ljm.close(handle)
-      print("Closed connection.")
+    ljm.close(handle)
+    print("Closed connection.")
 except Exception as e:
-      print("Close error:", e)
+    print("Close error:", e)
 
 print("\n### Acquisition complete ###\n")
-print(f"Aquired {data.shape[0]} samples with {data.shape[1]-1} channels in {times[-1]:.6f} seconds at {actual_rate:.2f} Hz.\n")
+print(
+    f"Aquired {data.shape[0]} samples with {data.shape[1] - 1} channels in {times[-1]:.6f} seconds at {actual_rate:.2f} Hz.\n"
+)
 
 print(f"Total sctripts execution time: {time.time() - start_t:.2f} seconds\n")
