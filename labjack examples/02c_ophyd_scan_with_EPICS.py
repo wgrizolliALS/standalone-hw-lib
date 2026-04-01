@@ -28,6 +28,8 @@ def test_voltage_reading(device_list):
 
 # --- EXECUTION ---
 # Assuming 'chan1', 'chan2', etc., are your instantiated Ophyd objects
+
+# **NOTE**: YOU NEED TO SETUP THE EPICS CHANNEL BELOW
 # Example: chan1 = EpicsSignal('PV_NAME_HERE', name='chan1')
 
 try:
