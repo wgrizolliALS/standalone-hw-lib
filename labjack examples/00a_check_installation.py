@@ -8,8 +8,9 @@ import os
 from labjack import ljm
 
 # %%
-print('### labjack python library version: ' + ljm.__version__ + ' ###')
+print("### labjack python library version: " + ljm.__version__ + " ###")
 
 # Print the installation path of the LJM library
 print(f"LJM Library Location: {os.path.dirname(ljm.__file__)}")
 
+ljm.closeAll()  # Close any open connections just in case
