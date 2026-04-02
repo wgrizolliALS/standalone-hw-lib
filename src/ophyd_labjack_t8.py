@@ -48,6 +48,7 @@ class LabJackT8(Device):
         identifier: str = "ANY",
         csv_fname: str | None = None,
         verbose: bool = False,
+        verbose_stream: bool = False,
         **kwargs,
     ):
 
@@ -67,6 +68,7 @@ class LabJackT8(Device):
         self.csv_fname = csv_fname
 
         self.verbose = verbose
+        self.verbose_stream = verbose_stream
 
         self.act_time = act_time
         self.sample_rate = sample_rate
@@ -105,12 +107,10 @@ class LabJackT8(Device):
         scans_per_read = int(scan_rate * self.act_time)
 
         def _worker():
-            if self.verbose:
+            if self.verbose_stream:
                 print(f"[INFO] {datetime.now()}: Aquisition STARTED.")
             try:
-                aAddresses = self.ljm_module.namesToAddresses(
-                    len(self.channel_names), self.channel_names
-                )[0]
+                aAddresses = self.ljm_module.namesToAddresses(len(self.channel_names), self.channel_names)[0]
                 actual_rate = self.ljm_module.eStreamStart(
                     self.handle, scans_per_read, len(aAddresses), aAddresses, scan_rate
                 )
@@ -136,7 +136,7 @@ class LabJackT8(Device):
                     arr = np.array(samples, dtype=object)
                 self.raw_block.put(arr)
 
-                if self.verbose:
+                if self.verbose_stream:
                     print(f"[INFO] {datetime.now()}: Aquisition FINISHED.")
                     print(
                         f"[INFO] Acquired {len(reshaped)} samples from {num_channels} channels at {actual_rate:} Hz.\n"
