@@ -19,10 +19,12 @@ Dependencies:
 - ophyd: Control layer for hardware devices
 - ophyd_local_labjack: Custom LabJack integration module
 """
+
 # %%
 import matplotlib
 import numpy as np
-# print(matplotlib.backends.backend_registry.list_builtin()) 
+
+# print(matplotlib.backends.backend_registry.list_builtin())
 matplotlib.use("qtagg")
 # matplotlib.use("ipympl")  # For Jupyter notebooks, use the interactive backend
 import matplotlib.pyplot as plt  # noqa: E402
@@ -30,17 +32,19 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 
 # %%
-from bluesky import RunEngine # type: ignore
-from bluesky.plans import scan, count  # type: ignore
+from bluesky import RunEngine  # type: ignore
+from bluesky.plans import scan, count  # type: ignore  # noqa: F401
 from bluesky.callbacks.best_effort import BestEffortCallback
-from ophyd.sim import motor # type: ignore
-from standalone_hw.labjack import LabJackT8 
+from ophyd.sim import motor  # type: ignore
+# from standalone_hw.labjack import LabJackT8
+
+from ophyd_labjack_t8 import LabJackT8
 from databroker import Broker
 
 
 # %% Change plot style and parameters
 
-print("Current Matplotlib backend:", matplotlib.get_backend()) # type: ignore
+print("Current Matplotlib backend:", matplotlib.get_backend())  # type: ignore
 plt.style.use("default")
 
 params = {
@@ -58,20 +62,28 @@ params = {
     "image.origin": "lower",
     "image.interpolation": "none",
     "image.cmap": "magma",
-    'lines.marker':'o',
-    'lines.linestyle':'-',
+    "lines.marker": "o",
+    "lines.linestyle": "-",
 }
 
 plt.rcParams.update(params)
 
-
+print("[Hi THERE 1]")
 # %%
 # Initialize Bluesky
+print("[Hi THERE 2]")
 RE = RunEngine({})
 RE.subscribe(BestEffortCallback())
+print("[Hi THERE 3]")
 
 # %% Initialize Hardware
-t8 = LabJackT8(name="t8", channels=[0, 1, 2, 4], act_time=2.0, sample_rate=1000.0)
+
+print("[Hi THERE 4]")
+
+t8 = LabJackT8(name="t8", channels=[0, 1, 2, 4], act_time=2.0, sample_rate=10, verbose=True)
+
+
+print("[Hi THERE 5]")
 
 # %%
 # Link the internal saver
@@ -80,17 +92,17 @@ RE.subscribe(t8.csv_saver)
 
 # %%
 # Initialize databroker (make sure you have configured a named broker, e.g. 'temp')
-db = Broker.named('temp')
+db = Broker.named("temp")
 RE.subscribe(db.insert)
 
 # %%
 plt.ion()
-plt.close('all')
+plt.close("all")
 # %% SCAN EXECUTION
 try:
     # run a scan and capture uid
-    uid = RE(scan([t8], motor, -5, 5, 5))  # blocks until complete
-    
+    uid = RE(scan([t8], motor, -5, 5, 5))  # type: ignore # blocks until complete
+
     print("Scan finished. uid:", uid)
     plt.show(block=False)
 except Exception as e:
@@ -99,14 +111,14 @@ except Exception as e:
 
 # %% Post Processing
 # # Read back from databroker
-run = db[uid][0]        # or db[-1]
+run = db[uid][0]  # or db[-1]
 
 
 # %%
 df = run.table()
 
-df = df.set_index('time')
-df['seconds'] = df.index.astype('int64')  / 1_000_000_000.0 # convert from nanoseconds to seconds
+df = df.set_index("time")
+df["seconds"] = df.index.astype("int64") / 1_000_000_000.0  # convert from nanoseconds to seconds
 # %%
 # events = list(run.events())
 # # times = [ev['time'] for ev in events]
@@ -120,24 +132,26 @@ df['seconds'] = df.index.astype('int64')  / 1_000_000_000.0 # convert from nanos
 
 # df2 = pd.DataFrame(rows)   # contains t8_ain0, motor, motor_setpoint, time
 
-df.plot(x='seconds', y=['t8_ain0', 't8_ain1', 't8_ain2', 't8_ain4'], marker='o')
+df.plot(x="seconds", y=["t8_ain0", "t8_ain1", "t8_ain2", "t8_ain4"], marker="o")
 plt.xlabel("Time (s)")
 plt.show()
 
 
-
 # %%
-_data2plot = np.asarray(df['t8_raw_block'].iloc[0])
-_data2plot[:,0] -= _data2plot[0,0] 
+_data2plot = np.asarray(df["t8_raw_block"].iloc[0])
+_data2plot[:, 0] -= _data2plot[0, 0]
 # normalize time to start at zero. Note that here is in seconds, not nanoseconds
 
 # %%
 plt.figure()
 
 for i in range(1, _data2plot.shape[1]):
-    print(f"Column {i} - min: {_data2plot[:,i].min():.4f}, max: {_data2plot[:,i].max():.4f}, mean: {_data2plot[:,i].mean():.4f}")
-    plt.plot(_data2plot[:,0], _data2plot[:,i]-np.mean(_data2plot[:,i]), '.-',
-             label=f'Column {i}')  # plot time vs each channel, subtract mean for better visualization
+    print(
+        f"Column {i} - min: {_data2plot[:, i].min():.4f}, max: {_data2plot[:, i].max():.4f}, mean: {_data2plot[:, i].mean():.4f}"
+    )
+    plt.plot(
+        _data2plot[:, 0], _data2plot[:, i] - np.mean(_data2plot[:, i]), ".-", label=f"Column {i}"
+    )  # plot time vs each channel, subtract mean for better visualization
 
 plt.xlabel("Time (s)")
 plt.ylabel("Voltage (V)")

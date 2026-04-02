@@ -20,30 +20,40 @@ Dependencies:
 - ophyd_local_labjack: Custom LabJack integration module
 """
 
-
 import matplotlib.pyplot as plt
 from bluesky import RunEngine
-from bluesky.plans import scan, count
+from bluesky.plans import count, scan  # type: ignore  # noqa: F401
 from bluesky.callbacks.best_effort import BestEffortCallback
-from ophyd.sim import motor
-from standalone_hw.labjack import LabJackT8 
+from ophyd.sim import motor  # type: ignore
 
-# Initialize Bluesky
-RE = RunEngine({})
-RE.subscribe(BestEffortCallback())
+from ophyd_labjack_t8 import LabJackT8
+
 
 # Initialize Hardware
-t8 = LabJackT8(name="t8", channels=[0, 1, 2], act_time=1.0, sample_rate=1000.0)
+print("[INFO] Initialize Hardware")
+t8 = LabJackT8(name="t8", channels=[0, 1, 2], act_time=1.0, sample_rate=1000.0, verbose=True)
+
+
+print("[INFO] Hardware INITIALIZED")
+
+# Initialize Bluesky
+print("[INFO] Starting Bluesky RunEngine...")
+RE = RunEngine({})
+print("[INFO] Bluesky RunEngine STARTED")
+print("[INFO] Subscribing BestEffortCallback for real-time visualization...")
+RE.subscribe(BestEffortCallback())
 
 # Link the internal saver
+print("[INFO] Subscribing LabJack T8 CSV saver to RunEngine...")
 RE.subscribe(t8.csv_saver)
 
 plt.ion()
 try:
     # High-level command
-    # RE(scan([t8], motor, -5, 5, 11))
-    RE(count([t8]))
-    
-    plt.show(block=True) 
+    print("[INFO] Starting Bluesky Scan with LabJack T8...")
+    RE(scan([t8], motor, -5, 5, 11))  # type: ignore
+    # RE(count([t8]))  # type: ignore
+
+    plt.show(block=True)
 finally:
     t8.close()
