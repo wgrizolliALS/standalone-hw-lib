@@ -30,14 +30,15 @@ from ophyd_labjack_t8 import LabJackT8
 
 
 # Initialize Hardware
-print("[INFO] Initialize Hardware")
-t8 = LabJackT8(name="t8", channels=[0, 1, 2], act_time=1.0, sample_rate=1000.0, verbose=True)
+print("[INFO] Initializing LabJack T8...")
+t8 = LabJackT8(name="t8", channels=[0, 1, 2, 4], act_time=1.0, sample_rate=1000.0, verbose=True)
+# t8 = LabJackT8(name="t8", channels=[0, 1, 2, 4], act_time=1.0, sample_rate=10.0, verbose=True)
 
-
-print("[INFO] Hardware INITIALIZED")
+print("[INFO] LabJack T8 initialized.")
+print("[INFO] info:", t8.handle_info)
 
 # Initialize Bluesky
-print("[INFO] Starting Bluesky RunEngine...")
+print("[INFO] Initializing RunEngine and BestEffortCallback...")
 RE = RunEngine({})
 print("[INFO] Bluesky RunEngine STARTED")
 print("[INFO] Subscribing BestEffortCallback for real-time visualization...")
@@ -51,7 +52,7 @@ plt.ion()
 try:
     # High-level command
     print("[INFO] Starting Bluesky Scan with LabJack T8...")
-    RE(scan([t8], motor, -5, 5, 11))  # type: ignore
+    RE(scan([t8], motor, -5, 5, 5))  # type: ignore
     # RE(count([t8]))  # type: ignore
 
     plt.show(block=True)
