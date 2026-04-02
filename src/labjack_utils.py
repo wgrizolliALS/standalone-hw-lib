@@ -218,6 +218,8 @@ def acquire_dataT8(
     data : np.ndarray
         Array with shape (num_scans, num_channels+1) where first column is time
         and remaining columns are channel data. Returns None on error.
+    info : dict
+        Dictionary with acquisition metadata (actual_rate, scans_collected, elapsed_time_sec, resolution_idx)
     """
     if channels is None:
         channels = ["AIN0"]
@@ -285,7 +287,12 @@ def acquire_dataT8(
 
         print(f"Collected {data.shape[0]} scans × {data.shape[1] - 1} channels (+ time column)")
         print(f"Time range: {times[0]:.6f} to {times[-1]:.6f} seconds")
-        return data
+        return data, {
+            "actual_rate": actual_rate,
+            "scans_collected": scans_collected,
+            "elapsed_time_sec": elapsed,
+            "resolution_idx": resolution_idx,
+        }
 
     except Exception as e:
         print("Error acquiring data:")
