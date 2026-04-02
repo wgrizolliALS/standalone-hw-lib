@@ -55,6 +55,7 @@ class LabJackT8(Device):
         if isinstance(channels, (int, float)):
             channels = [int(channels)]
 
+        self.handle_info = None
         self.active_channels = channels if channels is not None else [0]
         self.channel_names = [f"AIN{c}" for c in self.active_channels]
         self._scan_results = []
@@ -86,6 +87,7 @@ class LabJackT8(Device):
             if self.verbose:
                 print("[STATUS] Succesfully Connected to LabJack T8")
                 info = ljm.getHandleInfo(self.handle)
+                self.handle_info = info
                 print(
                     f"[INFO] Connected Device: {info[0]}, Connection: {info[1]}, Serial: {info[2]}, IP: {info[3]}, Port: {info[4]}\n"
                 )
