@@ -49,6 +49,7 @@ class LabJackT8(Device):
         csv_fname: str | None = None,
         verbose: bool = False,
         verbose_stream: bool = False,
+        record_waveform_signals: bool = False,
         **kwargs,
     ):
 
@@ -61,6 +62,9 @@ class LabJackT8(Device):
         self.channel_names = [f"AIN{c}" for c in self.active_channels]
         self._scan_results = []
         self.raw_block = Signal(name=f"{name}_raw_block", kind="omitted")  # type: ignore
+        # Add per-channel waveform signals
+        self._waveform_signals = {}
+        self._record_waveform_signals = record_waveform_signals
         self._ch_map = {}
         self._hint_fields = []
         self._csv_file = None
@@ -75,11 +79,18 @@ class LabJackT8(Device):
         self.last_scan_actual_rate = None
 
         for ch in self.channel_names:
+            # Scalar signal (mean)
             full_name = f"{name}_{ch.lower()}"
             sig = Signal(name=full_name, kind="hinted")  # type: ignore
             setattr(self, ch, sig)
             self._ch_map[ch] = sig
             self._hint_fields.append(full_name)
+            # Waveform signal (optional)
+            if self._record_waveform_signals:
+                wf_name = f"{name}_{ch.lower()}_waveform"
+                wf_sig = Signal(name=wf_name, kind="normal")  # type: ignore
+                setattr(self, f"{ch}_waveform", wf_sig)
+                self._waveform_signals[ch] = wf_sig
 
         from labjack import ljm
 
@@ -126,9 +137,14 @@ class LabJackT8(Device):
                     ts = t0 + (i / actual_rate)
                     samples.append([ts] + row.tolist())
 
+                # Scalar (mean) and waveform per channel
                 for i, ch in enumerate(self.channel_names):
                     avg = np.mean(reshaped[:, i])
                     self._ch_map[ch].put(avg)
+                    # Store waveform as 1D array (fixed shape) if enabled
+                    if self._record_waveform_signals and ch in self._waveform_signals:
+                        waveform = reshaped[:, i].astype(float)
+                        self._waveform_signals[ch].put(waveform)
 
                 try:
                     arr = np.array(samples, dtype=float)
@@ -164,23 +180,37 @@ class LabJackT8(Device):
 
     def read(self):
         res = super().read()
-        res.update(self.raw_block.read())  # type: ignore
+        # res.update(self.raw_block.read())  # type: ignore
         for sig in self._ch_map.values():
             res.update(sig.read())
+        # Add per-channel waveform signals if enabled
+        if self._record_waveform_signals:
+            for wf_sig in self._waveform_signals.values():
+                res.update(wf_sig.read())
         return res
 
     def describe(self):
         res = super().describe()
-        num_channels = len(self.channel_names)
+        # num_channels = len(self.channel_names)
         scans_per_read = int(self.sample_rate * self.act_time)
-        key = f"{self.name}_raw_block"
-        res[key] = {  # type: ignore
-            "source": "LabJackT8 raw block",
-            "dtype": "number",
-            "shape": (scans_per_read, num_channels + 1),
-        }
+        # key = f"{self.name}_raw_block"
+        # res[key] = {  # type: ignore
+        #     "source": "LabJackT8 raw block",
+        #     "dtype": "number",
+        #     "shape": (scans_per_read, num_channels + 1),
+        # }
         for sig in self._ch_map.values():
             res.update(sig.describe())
+        # Add per-channel waveform signal descriptions if enabled
+        if self._record_waveform_signals:
+            for i, ch in enumerate(self.channel_names):
+                # wf_sig = self._waveform_signals[ch]
+                wf_key = f"{self.name}_{ch.lower()}_waveform"
+                res[wf_key] = {  # type: ignore
+                    "source": f"LabJackT8 {ch} waveform",
+                    "dtype": "number",
+                    "shape": (scans_per_read,),
+                }
         return res
 
     def csv_saver(self, name, doc):

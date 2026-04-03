@@ -39,7 +39,10 @@ from ophyd.sim import motor  # type: ignore
 
 from ophyd_labjack_t8 import LabJackT8
 
-from databroker import Broker  # noqa: F401
+# %%
+from tiled.server import SimpleTiledServer
+from tiled.client import from_uri
+from bluesky.callbacks.tiled_writer import TiledWriter
 
 
 # %% Change plot style and parameters
@@ -72,11 +75,14 @@ plt.rcParams.update(params)
 
 print("[INFO] Initializing LabJack T8...")
 try:
-    t8 = LabJackT8(name="t8", channels=[0, 1, 2, 4], act_time=1.0, sample_rate=1000.0, verbose=True)
+    t8 = LabJackT8(
+        name="t8", channels=[0, 1, 2, 4], act_time=1.0, sample_rate=1000.0, verbose=True, record_waveform_signals=True
+    )
     print("[INFO] LabJack T8 initialized.")
     print("[INFO] info:", t8.handle_info)
 except Exception as e:
     print(f"[ERROR] Failed to initialize LabJack T8: {e}")
+    print("***STOPPING EXECUTION*** Please check the LabJack connection and try again.")
     exit(1)
 
 # %%
@@ -100,11 +106,14 @@ print("[INFO] RunEngine and BestEffortCallback initialized.")
 
 
 # %%
-# Initialize databroker (make sure you have configured a named broker, e.g. 'temp')
-print("[INFO] Initializing Databroker and subscribing to RunEngine...")
-db = Broker.named("temp")
-RE.subscribe(db.insert)
-print("[INFO] Databroker initialized and subscribed to RunEngine.")
+# Initialize local Tiled server and client
+print("[INFO] Initializing local Tiled server and subscribing to RunEngine...")
+save_path = "./tiled_labjack_data"
+tiled_server = SimpleTiledServer(readable_storage=[save_path])  # type: ignore
+tiled_client = from_uri(tiled_server.uri)
+tw = TiledWriter(tiled_client)
+RE.subscribe(tw)
+print("[INFO] Local Tiled server and TiledWriter initialized and subscribed to RunEngine.")
 
 
 # %%
@@ -124,21 +133,54 @@ except Exception as e:
 # %%
 plt.show(block=True)
 
-# %% Read back from databroker
+# %% Read back from Tiled
+print("[INFO] Retrieving run data from Tiled catalog...")
 
-print("[INFO] Retrieving run data from Databroker...")
-run = db[uid]  # or db[-1]
+key_list = tiled_client.keys()
+
+for i, key in enumerate(key_list):
+    print(f"[INFO] key {i}: {tiled_client[key]}")
+
+
+print("[INFO] Retrieving dataset from Tiled client...")
+ds = tiled_client[uid]  # get the most recent dataset
+# ds = tiled_client[key_list[-1]]  # get a past dataset
+print("[INFO] LOADED:", ds)
+
+# %% Optional: Convert to DataFrame for easier analysis
+print("[INFO] Converting dataset to DataFrame...")
+df = ds.primary.get_contents()  # type: ignore
+print("[INFO] DataFrame head:\n", df.head())
+
+# %%
+print("[POSTPROCESSING] Inspecting dataset variables...")
+
+
+stream = ds.primary
+
+for key in stream.keys():
+    print(f"[INFO] Stream variable: {key}, shape: {stream[key].shape}")
+
+# %%
+# import numpy as np
+
+# wf_array = np.array([])  # empty array to hold waveform data
+
+# for key in stream.keys():
+#     if "waveform" in key:
+#         wf_array = np.hstack((wf_array, stream[key].values)) if wf_array.size else stream[key].values
+#         print(f"[INFO] Extracted waveform data, shape: {wf_array.shape}")
+
 
 # %% Post-processing and visualization
 
-print("[INFO] Post-processing run data...")
-df = run.table()
+# print("[POSTPROCESSING] Post-processing run data...")
+# df = run.table()
 
-df = df.set_index("time")
-df["seconds"] = df.index.astype("int64") / 1_000_000_000.0  # convert from nanoseconds to seconds
+# df = df.set_index("time")
+# df["seconds"] = df.index.astype("int64") / 1_000_000_000.0  # convert from nanoseconds to seconds
 
-print("[RESULT] DataFrame Columns:\n", df.columns)
-print("[RESULT] DataFrame head:\n", df.head())
+# print("[RESULT] DataFrame head:\n", df.head())
 
 # %%
 if t8 is not None:
