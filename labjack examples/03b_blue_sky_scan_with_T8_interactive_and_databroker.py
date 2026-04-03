@@ -71,16 +71,29 @@ plt.rcParams.update(params)
 # %% Initialize Hardware
 
 print("[INFO] Initializing LabJack T8...")
-t8 = LabJackT8(name="t8", channels=[0, 1, 2, 4], act_time=1.0, sample_rate=1000.0, verbose=False)
-print("[INFO] LabJack T8 initialized.")
-print("[INFO] info:", t8.handle_info)
+try:
+    t8 = LabJackT8(name="t8", channels=[0, 1, 2, 4], act_time=1.0, sample_rate=1000.0, verbose=True)
+    print("[INFO] LabJack T8 initialized.")
+    print("[INFO] info:", t8.handle_info)
+except Exception as e:
+    print(f"[ERROR] Failed to initialize LabJack T8: {e}")
+    # exit(1)
 
 # %%
 # Initialize Bluesky
 print("[INFO] Initializing RunEngine and BestEffortCallback...")
 RE = RunEngine({})
+print("[INFO] Bluesky RunEngine STARTED. State: ", RE.state)
+
+for key, val in RE.md["versions"].items():
+    print(f"[INFO] {key} version {val}")
+
+RE.md["any metadata you want to add"] = "example value"
+
+# %%
 # Link the BestEffortCallback for real-time visualization (optional but recommended)
-RE.subscribe(BestEffortCallback())
+RE.subscribe(BestEffortCallback())  # type: ignore
+print("[INFO] BestEffortCallback subscribed to RunEngine.")
 # Link the internal saver
 RE.subscribe(t8.csv_saver)
 print("[INFO] RunEngine and BestEffortCallback initialized.")
@@ -101,18 +114,20 @@ plt.close("all")
 try:
     print("[INFO] Starting scan...")
     # run a scan and capture uid
-    uid = RE(scan([t8], motor, -5, 5, 5))  # type: ignore # blocks until complete
+    (uid,) = RE(scan([t8], motor, -5, 5, 5))  # type: ignore # blocks until complete
 
     print("[INFO] Scan finished. uid:", uid)
     plt.show(block=False)
 except Exception as e:
     print(f"[ERROR] Error during scan execution: {e}")
 
+# %%
+plt.show(block=True)
+
 # %% Read back from databroker
 
 print("[INFO] Retrieving run data from Databroker...")
-run = db[uid][0]  # or db[-1]
-
+run = db[uid]  # or db[-1]
 
 # %% Post-processing and visualization
 
@@ -123,16 +138,6 @@ df = df.set_index("time")
 df["seconds"] = df.index.astype("int64") / 1_000_000_000.0  # convert from nanoseconds to seconds
 
 print("[RESULT] DataFrame head:\n", df.head())
-# %%
-# events = list(run.events())
-# # times = [ev['time'] for ev in events]
-# # build DataFrame excluding t8_raw_block
-# rows = []
-# for ev in events:
-#     d = ev['data'].copy()
-#     d.pop('t8_raw_block', None)   # drop the field
-#     d['time'] = ev['time']
-#     rows.append(d)
 
 # %%
 if t8 is not None:
