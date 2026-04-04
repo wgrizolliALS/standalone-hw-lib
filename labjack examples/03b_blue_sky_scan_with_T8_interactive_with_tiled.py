@@ -106,7 +106,7 @@ RE.md["any metadata you want to add"] = "example value"
 RE.subscribe(BestEffortCallback())  # type: ignore
 print("[SETUP ACQUISITION] BestEffortCallback subscribed to RunEngine.")
 # Link the internal saver
-# RE.subscribe(t8.csv_saver) # (un)comment this line to enable/disable internal CSV saving
+RE.subscribe(t8.csv_saver)  # (un)comment this line to enable/disable internal CSV saving
 print("[SETUP ACQUISITION] RunEngine and BestEffortCallback initialized.")
 
 

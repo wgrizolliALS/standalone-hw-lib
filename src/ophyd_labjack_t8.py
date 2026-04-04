@@ -9,15 +9,16 @@ from ophyd import Device, Signal
 class LabJackT8(Device):
     """
     A self-contained Ophyd device for the LabJack T8.
-    It handles:
+
+    Features:
     1. Hardware Connection (LJM)
     2. Asynchronous Triggering (Threading)
     3. Data Processing (Averaging for Bluesky)
-    4. Data Logging (Self-contained CSV saving for Raw Data)
+    4. Data Logging (Self-contained CSV saving for Raw Data, optional)
+    5. Optional per-channel waveform signal recording
 
     Parameters
     ----------
-
     name : str
         The name of the device for Ophyd/Bluesky.
     channels : list[int] | int | None, optional
@@ -32,9 +33,16 @@ class LabJackT8(Device):
         LJM connection type (e.g., "USB", "ETHERNET", "ANY").
     identifier : str, optional
         LJM identifier (e.g., "ANY", or a specific serial number).
+    save_raw_to_csv : bool, optional
+        If True, saves raw waveform data to CSV during scans. Default is True.
+    enable_waveforms : bool, optional
+        If True, exposes per-channel waveform signals and time vector. Default is False.
     csv_fname : str | None, optional
         Optional filename for the raw data CSV export.
-
+    verbose : bool, optional
+        Print connection and status info.
+    verbose_stream : bool, optional
+        Print acquisition info.
     """
 
     def __init__(
@@ -46,10 +54,11 @@ class LabJackT8(Device):
         sample_rate: float = 20.0,
         connectionType: str = "ANY",
         identifier: str = "ANY",
+        save_raw_to_csv: bool = True,
         csv_fname: str | None = None,
         verbose: bool = False,
         verbose_stream: bool = False,
-        record_waveform_signals: bool = False,
+        enable_waveforms: bool = False,
         **kwargs,
     ):
 
@@ -60,12 +69,13 @@ class LabJackT8(Device):
         self.handle_info = None
         self.active_channels = channels if channels is not None else [0]
         self.channel_names = [f"AIN{c}" for c in self.active_channels]
+        self.save_raw_to_csv = save_raw_to_csv
         self._scan_results = []
-        self.raw_block = Signal(name=f"{name}_raw_block", kind="omitted")  # type: ignore
+        self._raw_block_for_csv = None  # Only for CSV saving, not exposed as a Signal
         # Add per-channel waveform signals
         self._waveform_signals = {}
         self._waveform_time_signal = None
-        self._record_waveform_signals = record_waveform_signals
+        self._record_waveform_signals = enable_waveforms
         self._ch_map = {}
         self._hint_fields = []
         self._csv_file = None
@@ -120,6 +130,11 @@ class LabJackT8(Device):
         return {"fields": self._hint_fields}
 
     def trigger(self):
+        """
+        Start an asynchronous acquisition from the LabJack T8.
+        Acquires a block of data, computes per-channel means, and (optionally) stores waveforms and time vector.
+        The raw block is stored for CSV export if enabled.
+        """
         samples = []
         scan_rate = self.sample_rate
         scans_per_read = int(scan_rate * self.act_time)
@@ -162,7 +177,7 @@ class LabJackT8(Device):
                 except Exception:
                     print("[WARNING] Could not convert samples to float array, storing as object array instead.")
                     arr = np.array(samples, dtype=object)
-                self.raw_block.put(arr)
+                self._raw_block_for_csv = arr  # Store for CSV saver only
 
                 if self.verbose_stream:
                     print(f"[INFO] {datetime.now()}: Aquisition FINISHED.")
@@ -191,8 +206,11 @@ class LabJackT8(Device):
         return status
 
     def read(self):
+        """
+        Read the current values from all signals.
+        Returns a dictionary with per-channel means and, if enabled, waveform and time signals.
+        """
         res = super().read()
-        # res.update(self.raw_block.read())  # type: ignore
         for sig in self._ch_map.values():
             res.update(sig.read())
         # Add per-channel waveform signals if enabled
@@ -204,15 +222,12 @@ class LabJackT8(Device):
         return res
 
     def describe(self):
+        """
+        Describe the structure of the signals produced by this device.
+        Includes per-channel means and, if enabled, waveform and time signals.
+        """
         res = super().describe()
-        # num_channels = len(self.channel_names)
         scans_per_read = int(self.sample_rate * self.act_time)
-        # key = f"{self.name}_raw_block"
-        # res[key] = {  # type: ignore
-        #     "source": "LabJackT8 raw block",
-        #     "dtype": "number",
-        #     "shape": (scans_per_read, num_channels + 1),
-        # }
         for sig in self._ch_map.values():
             res.update(sig.describe())
         # Add per-channel waveform signal descriptions if enabled
@@ -236,9 +251,14 @@ class LabJackT8(Device):
     def csv_saver(self, name, doc):
         """
         Bluesky callback to save raw waveform data to CSV during a scan.
-        Writes each event's samples as they arrive, so data is not lost if interrupted.
+        Only saves if save_raw_to_csv is True.
+        If save_raw_to_csv is False, this callback is a no-op and nothing will be saved (safe to subscribe regardless of flag).
+        Uses the temporary _raw_block_for_csv attribute for performance, not stored in event stream.
         Columns: Time, motor, [channels...]
         """
+        if not self.save_raw_to_csv:
+            return
+
         if name == "start":
             self._scan_results.clear()
             self.csv_fname = f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
@@ -255,7 +275,7 @@ class LabJackT8(Device):
 
         elif name == "event":
             m_pos = doc.get("data", {}).get("motor", 0.0)
-            raw_data = doc.get("data", {}).get(f"{self.name}_raw_block", [])
+            raw_data = self._raw_block_for_csv if self._raw_block_for_csv is not None else []
             for sample in raw_data:
                 row = {
                     "Time": datetime.fromtimestamp(sample[0]).strftime("%Y-%m-%d %H:%M:%S.%f"),
@@ -274,6 +294,7 @@ class LabJackT8(Device):
                     self._csv_file.flush()
                 except Exception as e:
                     print(f"[CSV ERROR] Could not flush file: {e}")
+            self._raw_block_for_csv = None  # Clear after use
 
         elif name == "stop":
             if self._csv_file:
@@ -285,6 +306,9 @@ class LabJackT8(Device):
                 self._csv_file = None
 
     def close(self):
+        """
+        Close the connection to the LabJack device.
+        """
         if hasattr(self, "handle") and self.handle:
             self.ljm_module.close(self.handle)
             print("[INFO] LabJack connection closed.")
