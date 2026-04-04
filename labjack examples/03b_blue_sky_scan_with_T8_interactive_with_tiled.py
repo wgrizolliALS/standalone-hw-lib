@@ -20,7 +20,8 @@ Dependencies:
 - ophyd_local_labjack: Custom LabJack integration module
 """
 
-# %%
+# %% Regular imports
+
 import matplotlib
 # import numpy as np
 
@@ -28,18 +29,22 @@ import matplotlib
 matplotlib.use("qtagg")
 # matplotlib.use("ipympl")  # For Jupyter notebooks, use the interactive backend
 import matplotlib.pyplot as plt  # noqa: E402
+
 # show current backend
+import numpy as np
+import pandas as pd
 
 
-# %%
+# %% Bluesky and Ophyd imports
 from bluesky import RunEngine  # type: ignore
 from bluesky.plans import count, scan  # type: ignore  # noqa: F401
 from bluesky.callbacks.best_effort import BestEffortCallback
 from ophyd.sim import motor  # type: ignore
 
+# %% Custom LabJackT8 import
 from ophyd_labjack_t8 import LabJackT8
 
-# %%
+# %% Databroker and Tiled imports
 from tiled.server import SimpleTiledServer
 from tiled.client import from_uri
 from bluesky.callbacks.tiled_writer import TiledWriter
@@ -47,7 +52,7 @@ from bluesky.callbacks.tiled_writer import TiledWriter
 
 # %% Change plot style and parameters
 
-print("Current Matplotlib backend:", matplotlib.get_backend())  # type: ignore
+print("[INFO] Current Matplotlib backend:", matplotlib.get_backend())  # type: ignore
 plt.style.use("default")
 
 params = {
@@ -73,13 +78,13 @@ plt.rcParams.update(params)
 
 # %% Initialize Hardware
 
-print("[INFO] Initializing LabJack T8...")
+print("[SETUP HW] Initializing LabJack T8...")
 try:
     t8 = LabJackT8(
         name="t8", channels=[0, 1, 2, 4], act_time=1.0, sample_rate=1000.0, verbose=True, record_waveform_signals=True
     )
-    print("[INFO] LabJack T8 initialized.")
-    print("[INFO] info:", t8.handle_info)
+    print("[SETUP HW] LabJack T8 initialized.")
+    print("[SETUP HW] info:", t8.handle_info)
 except Exception as e:
     print(f"[ERROR] Failed to initialize LabJack T8: {e}")
     print("***STOPPING EXECUTION*** Please check the LabJack connection and try again.")
@@ -87,102 +92,182 @@ except Exception as e:
 
 # %%
 # Initialize Bluesky
-print("[INFO] Initializing RunEngine and BestEffortCallback...")
+print("[SETUP ACQUISITION] Initializing RunEngine and BestEffortCallback...")
 RE = RunEngine({})
-print("[INFO] Bluesky RunEngine STARTED. State: ", RE.state)
+print("[SETUP ACQUISITION] Bluesky RunEngine STARTED. State: ", RE.state)
 
 for key, val in RE.md["versions"].items():
-    print(f"[INFO] {key} version {val}")
+    print(f"[SETUP ACQUISITION] {key} version {val}")
 
 RE.md["any metadata you want to add"] = "example value"
 
-# %%
+# %% Additional Bluesky settings and subscriptions
 # Link the BestEffortCallback for real-time visualization (optional but recommended)
 RE.subscribe(BestEffortCallback())  # type: ignore
-print("[INFO] BestEffortCallback subscribed to RunEngine.")
+print("[SETUP ACQUISITION] BestEffortCallback subscribed to RunEngine.")
 # Link the internal saver
-RE.subscribe(t8.csv_saver)
-print("[INFO] RunEngine and BestEffortCallback initialized.")
+# RE.subscribe(t8.csv_saver) # (un)comment this line to enable/disable internal CSV saving
+print("[SETUP ACQUISITION] RunEngine and BestEffortCallback initialized.")
 
 
-# %%
-# Initialize local Tiled server and client
-print("[INFO] Initializing local Tiled server and subscribing to RunEngine...")
+# %% Initialize local Tiled server and client
+print("[DATASERVER] Initializing local Tiled server and subscribing to RunEngine...")
 save_path = "./tiled_labjack_data"
 tiled_server = SimpleTiledServer(readable_storage=[save_path])  # type: ignore
 tiled_client = from_uri(tiled_server.uri)
 tw = TiledWriter(tiled_client)
 RE.subscribe(tw)
-print("[INFO] Local Tiled server and TiledWriter initialized and subscribed to RunEngine.")
+print("[DATASERVER] Local Tiled server and TiledWriter initialized and subscribed to RunEngine.")
 
 
 # %%
 plt.ion()
 plt.close("all")
+
 # %% SCAN EXECUTION
 try:
-    print("[INFO] Starting scan...")
+    print("[ACQUISITION] Acquisition STARTED...")
     # run a scan and capture uid
     (uid,) = RE(scan([t8], motor, -5, 5, 5))  # type: ignore # blocks until complete
 
-    print("[INFO] Scan finished. uid:", uid)
+    print("[ACQUISITION] Acquisition FINISHED. uid:", uid)
     plt.show(block=False)
 except Exception as e:
     print(f"[ERROR] Error during scan execution: {e}")
+    print("***STOPPING EXECUTION*** Please check the error message and try again.")
+    exit(1)
 
-# %%
+print("[VISUALIZATION] Close plot to proceed (block=True)...")
 plt.show(block=True)
+# exit(0)  # stop execution here to avoid running post-processing code in case of errors during acquisition
 
 # %% Read back from Tiled
-print("[INFO] Retrieving run data from Tiled catalog...")
+print("[DATASERVER] Retrieving run data from Tiled catalog...")
 
-key_list = tiled_client.keys()
+uid_list = tiled_client.keys()
 
-for i, key in enumerate(key_list):
-    print(f"[INFO] key {i}: {tiled_client[key]}")
+for i, key in enumerate(uid_list):
+    print(f"[DATASERVER] key {i}: {tiled_client[key]}")
 
 
-print("[INFO] Retrieving dataset from Tiled client...")
-ds = tiled_client[uid]  # get the most recent dataset
+print("[DATASERVER] Retrieving dataset from Tiled client...")
+ds = tiled_client[uid_list[-1]]  # get the most recent dataset
 # ds = tiled_client[key_list[-1]]  # get a past dataset
-print("[INFO] LOADED:", ds)
+print("[DATASERVER] LOADED:", ds)
 
-# %% Optional: Convert to DataFrame for easier analysis
-print("[INFO] Converting dataset to DataFrame...")
-df = ds.primary.get_contents()  # type: ignore
-print("[INFO] DataFrame head:\n", df.head())
+print("[DATASERVER] END DATA RETRIEVAL, BEGINNING POST-PROCESSING")
 
-# %%
+# %% POST-PROCESSING AND VISUALIZATION
+
 print("[POSTPROCESSING] Inspecting dataset variables...")
 
+stream = ds.primary  # the primary stream is where the TiledWriter writes the data by default, but you can also access other streams if you have them configured (e.g. for metadata, or separate streams for different devices)
 
-stream = ds.primary
+ds_xr = stream.read()  # xarray.Dataset containing all the data for this run
+# ds_xr is a xarray.Dataset. It is faster to access values because stream will run a yield for each request, while ds_xr has all data in memory. However, ds_xr is not lazy and will load everything into memory at once, so it may not be suitable for very large datasets.
+# For large dataset, use stream[key].read() to read one variable at a time, which will yield one event at a time and not load everything into memory at once.
 
+# %% I FOUND A BUG
+
+# This works, returning a np array of floats
+foo = stream["t8_ain1_waveform"].read()
+
+# This does not work, returning a np array of strings instead of floats, which is not what we want
+bar = stream.read()["t8_ain1_waveform"]
+
+# %% Inspecting the dataset variables and their types/shapes to understand the issue with waveform data
+print("[POSTPROCESSING] Getting stream data into a pandas df")
+
+# Prepare a dictionary to hold the data for each key
+data = {}
+waveform_cols = []
+# Loop through each key and read the data
 for key in stream.keys():
-    print(f"[INFO] Stream variable: {key}, shape: {stream[key].shape}")
+    arr = stream[key].read()
+    # If the data is a 2D array (e.g., waveform: shape (events, waveform_length)), flatten or keep as list
+    print(f"  Reading data for key: {key}, type: {type(arr)}, shape: {arr.shape}")
+    if isinstance(arr, np.ndarray) and arr.ndim > 1:
+        # Store as list of arrays (or you can flatten, or keep as is for further processing)
+        data[key] = [a for a in arr]
+        waveform_cols.append(key)
+    else:
+        # Scalar or 1D array
+        data[key] = arr
+
+# %% Create a DataFrame
+df = pd.DataFrame(data)
+df = df.explode(
+    waveform_cols
+)  # Needed to explode the waveform columns to get one row per event, with the waveform data as a list/array in each row
+
+# %% Adjustments to time columns and indexing
+time_cols = [col for col in df.columns if "ts_" in col or "_tim" in col]
+
+print("[POSTPROCESSING] Adjusting time columns and DataFrame index...")
+# If the index is still int64, try setting it to the time column
+if df.index.dtype == "int64":
+    df.index = pd.to_datetime(df["t8_waveform_time"], unit="s")
+    df.index.name = "Time and Date"
+
+print("[POSTPROCESSING] DataFrame index set to time column. Index dtype:", df.index.dtype)
+# Remove time offset
+df[time_cols] = df[time_cols] - (df[time_cols].min()).min()
+
+print("[POSTPROCESSING] END OF POST-PROCESSING. DataFrame ready for analysis and visualization.")
+print("[RESULT] DataFrame Columns:\n", df.columns)
+print("[RESULT] DataFrame head:\n", df.head())
+# %%
+print("[VISUALIZATION] Plotting waveforms for each seq_num...")
+for _i in df["seq_num"].unique():
+    plt.figure()
+    print(f"seq_num {_i} has {len(df[df['seq_num'] == _i])} events")
+
+    _x_vec = df[df["seq_num"] == _i]["t8_waveform_time"]
+
+    _x_vec -= _x_vec.min()  # remove time offset for better visualization
+
+    for col in waveform_cols:
+        print(f"Plotting {col} for seq_num {_i}")
+        _y_vec = df[df["seq_num"] == _i][col]
+        plt.plot(_x_vec, _y_vec, ".-", label=f"{col} for seq_num {_i}")
+
+    plt.title(f"seq_num {_i}")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Signal [Volts]")
+    plt.legend()
+    plt.show()
+
+print("[VISUALIZATION] Close plot to proceed (block=True)...")
+plt.show(block=True)
 
 # %%
-# import numpy as np
 
-# wf_array = np.array([])  # empty array to hold waveform data
+print("[VISUALIZATION] Plotting waveforms for all events together...")
+for col in waveform_cols:
+    plt.figure()
+    print(f"seq_num {_i} has {len(df[df['seq_num'] == _i])} events")
 
-# for key in stream.keys():
-#     if "waveform" in key:
-#         wf_array = np.hstack((wf_array, stream[key].values)) if wf_array.size else stream[key].values
-#         print(f"[INFO] Extracted waveform data, shape: {wf_array.shape}")
+    _x_vec = df["t8_waveform_time"]
 
+    print(f"Plotting {col}...")
+    _y_vec = df[col]
+    plt.plot(_x_vec, _y_vec, ".", label=col)
+    plt.plot(_x_vec, _y_vec, "-", c="C0", alpha=0.5)
 
-# %% Post-processing and visualization
+plt.title(col)
+plt.xlabel("Time (s)")
+plt.ylabel("Signal [Volts]")
 
-# print("[POSTPROCESSING] Post-processing run data...")
-# df = run.table()
+print("[VISUALIZATION] Close plot to proceed (block=True)...")
+plt.show(block=True)
 
-# df = df.set_index("time")
-# df["seconds"] = df.index.astype("int64") / 1_000_000_000.0  # convert from nanoseconds to seconds
-
-# print("[RESULT] DataFrame head:\n", df.head())
+print("[VISUALIZATION] END OF VISUALIZATION.")
 
 # %%
+print("[INFO] END OF SCRIPT. Closing LabJack T8 connection...")
 if t8 is not None:
     t8.close()
+
+print("[INFO] LabJack T8 connection closed.")
+exit(0)
 # %%

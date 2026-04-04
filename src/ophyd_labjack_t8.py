@@ -64,6 +64,7 @@ class LabJackT8(Device):
         self.raw_block = Signal(name=f"{name}_raw_block", kind="omitted")  # type: ignore
         # Add per-channel waveform signals
         self._waveform_signals = {}
+        self._waveform_time_signal = None
         self._record_waveform_signals = record_waveform_signals
         self._ch_map = {}
         self._hint_fields = []
@@ -91,6 +92,12 @@ class LabJackT8(Device):
                 wf_sig = Signal(name=wf_name, kind="normal")  # type: ignore
                 setattr(self, f"{ch}_waveform", wf_sig)
                 self._waveform_signals[ch] = wf_sig
+        # Only one time vector for all channels
+        if self._record_waveform_signals:
+            wf_time_name = f"{name}_waveform_time"
+            wf_time_sig = Signal(name=wf_time_name, kind="normal")  # type: ignore
+            setattr(self, "waveform_time", wf_time_sig)
+            self._waveform_time_signal = wf_time_sig
 
         from labjack import ljm
 
@@ -143,12 +150,17 @@ class LabJackT8(Device):
                     self._ch_map[ch].put(avg)
                     # Store waveform as 1D array (fixed shape) if enabled
                     if self._record_waveform_signals and ch in self._waveform_signals:
-                        waveform = reshaped[:, i].astype(float)
+                        waveform = np.asarray(reshaped[:, i], dtype=float)
                         self._waveform_signals[ch].put(waveform)
+                # Store time vector ONCE for all channels
+                if self._record_waveform_signals and self._waveform_time_signal is not None:
+                    time_vector = np.array([t0 + (j / actual_rate) for j in range(reshaped.shape[0])], dtype=float)
+                    self._waveform_time_signal.put(time_vector)
 
                 try:
                     arr = np.array(samples, dtype=float)
                 except Exception:
+                    print("[WARNING] Could not convert samples to float array, storing as object array instead.")
                     arr = np.array(samples, dtype=object)
                 self.raw_block.put(arr)
 
@@ -187,6 +199,8 @@ class LabJackT8(Device):
         if self._record_waveform_signals:
             for wf_sig in self._waveform_signals.values():
                 res.update(wf_sig.read())
+            if self._waveform_time_signal is not None:
+                res.update(self._waveform_time_signal.read())  # type: ignore
         return res
 
     def describe(self):
@@ -204,25 +218,42 @@ class LabJackT8(Device):
         # Add per-channel waveform signal descriptions if enabled
         if self._record_waveform_signals:
             for i, ch in enumerate(self.channel_names):
-                # wf_sig = self._waveform_signals[ch]
                 wf_key = f"{self.name}_{ch.lower()}_waveform"
                 res[wf_key] = {  # type: ignore
                     "source": f"LabJackT8 {ch} waveform",
                     "dtype": "number",
                     "shape": (scans_per_read,),
                 }
+            # Only one time vector for all channels
+            wf_time_key = f"{self.name}_waveform_time"
+            res[wf_time_key] = {  # type: ignore
+                "source": "LabJackT8 waveform time",
+                "dtype": "number",
+                "shape": (scans_per_read,),
+            }
         return res
 
     def csv_saver(self, name, doc):
+        """
+        Bluesky callback to save raw waveform data to CSV during a scan.
+        Writes each event's samples as they arrive, so data is not lost if interrupted.
+        Columns: Time, motor, [channels...]
+        """
         if name == "start":
             self._scan_results.clear()
             self.csv_fname = f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            self._csv_file = open(self.csv_fname, "w", newline="", encoding="utf-8")
+            try:
+                self._csv_file = open(self.csv_fname, "w", newline="", encoding="utf-8")
+            except Exception as e:
+                print(f"[CSV ERROR] Could not open file {self.csv_fname}: {e}")
+                self._csv_file = None
+                self._csv_writer = None
+                return
             fieldnames = ["Time", "motor"] + self.channel_names
             self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=fieldnames)
             self._csv_writer.writeheader()
 
-        if name == "event":
+        elif name == "event":
             m_pos = doc.get("data", {}).get("motor", 0.0)
             raw_data = doc.get("data", {}).get(f"{self.name}_raw_block", [])
             for sample in raw_data:
@@ -234,13 +265,22 @@ class LabJackT8(Device):
                     row[ch_name] = sample[i + 1]
                 self._scan_results.append(row)
                 if self._csv_writer:
-                    self._csv_writer.writerow(row)
+                    try:
+                        self._csv_writer.writerow(row)
+                    except Exception as e:
+                        print(f"[CSV ERROR] Could not write row: {e}")
             if self._csv_file:
-                self._csv_file.flush()
+                try:
+                    self._csv_file.flush()
+                except Exception as e:
+                    print(f"[CSV ERROR] Could not flush file: {e}")
 
-        if name == "stop":
+        elif name == "stop":
             if self._csv_file:
-                self._csv_file.close()
+                try:
+                    self._csv_file.close()
+                except Exception as e:
+                    print(f"[CSV ERROR] Could not close file: {e}")
                 print(f"\n[CSV] Saved {len(self._scan_results)} rows to {self.csv_fname}")
                 self._csv_file = None
 
