@@ -267,7 +267,12 @@ print("[VISUALIZATION] END OF VISUALIZATION.")
 print("[INFO] END OF SCRIPT. Closing LabJack T8 connection...")
 if t8 is not None:
     t8.close()
-
 print("[INFO] LabJack T8 connection closed.")
+
+print("[INFO] Closing Tiled server connection...")
+if tiled_server is not None:
+    tiled_server.close()  # or tiled_server.shutdown() if available
+print("[INFO] Tiled server connection closed.")
+
 exit(0)
 # %%
