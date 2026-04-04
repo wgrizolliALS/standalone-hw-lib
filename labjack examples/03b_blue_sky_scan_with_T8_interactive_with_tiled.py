@@ -81,7 +81,7 @@ plt.rcParams.update(params)
 print("[SETUP HW] Initializing LabJack T8...")
 try:
     t8 = LabJackT8(
-        name="t8", channels=[0, 1, 2, 4], act_time=1.0, sample_rate=1000.0, verbose=True, record_waveform_signals=True
+        name="t8", channels=[0, 1, 2, 4], act_time=1.0, sample_rate=1000.0, verbose=True, enable_waveforms=True
     )
     print("[SETUP HW] LabJack T8 initialized.")
     print("[SETUP HW] info:", t8.handle_info)
