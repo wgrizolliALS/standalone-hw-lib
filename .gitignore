@@ -11,6 +11,7 @@
 !environment.yml
 !LICENSE
 !**/*.py
+!**/*.ipynb
 !**/*.md
 !**/*.ini
 !**/*.png
