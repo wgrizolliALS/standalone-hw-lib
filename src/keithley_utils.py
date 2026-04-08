@@ -1,9 +1,58 @@
 import serial
 import serial.tools.list_ports
 import time
+from datetime import datetime
 
 
-def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=False):
+def print_verbose(msg, verbose=True, timestamp=False):
+    if verbose:
+        if timestamp:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] : {msg}")
+        else:
+            print(msg)
+
+
+def serial_query(
+    cmd: str, port: str, baudrate: int = 9600, wait_serial=False, verbose: bool = False, debug: bool = False
+) -> str | None:
+    """Sends a string to serial port and returns the response."""
+    print_verbose(f"[DEBUG] : Attempting to open serial port {port} at baudrate {baudrate}", debug)
+
+    try:
+        with serial.Serial(port, baudrate=baudrate, timeout=0.5) as ser:
+            print_verbose(f"[COMMAND] : {cmd}", verbose, timestamp=True)
+            ser.write(f"{cmd}\n".encode())
+
+            _time_init = time.time()
+            while wait_serial and ser.in_waiting == 0:
+                time.sleep(0.25)
+                print_verbose(f"[DEBUG] : Waiting for response from {cmd}...", debug, timestamp=True)
+
+                if time.time() - _time_init >= 5 * ser.timeout:  # type: ignore
+                    raise TimeoutError(f"Timeout waiting for response to {cmd} on {port}")
+
+            response = ser.readline().decode(errors="ignore").strip()
+
+        if response is None or response == "":
+            response = None
+
+        print_verbose(f"[RESPONSE] : {response}", verbose, timestamp=True)
+        print_verbose(f"[DEBUG] : {type(response) = }", debug, timestamp=True)
+
+        return response
+
+    except serial.SerialException as e:
+        print_verbose(f"[ERROR] : Error communicating with device on {port}: {e}", verbose, timestamp=True)
+        return None
+    except TimeoutError as e:
+        print_verbose(f"[ERROR] : {e}", verbose, timestamp=True)
+        return None
+    except Exception as e:
+        print_verbose(f"[ERROR] : Unexpected error on {port}: {e}", verbose, timestamp=True)
+        return None
+
+
+def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=False, debug=False) -> list[dict] | None:
     """
     Scans all available serial ports and attempts to identify Keithley 6514 instruments.
 
@@ -14,42 +63,54 @@ def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=Fa
     """
     found_devices = []
     ports = serial.tools.list_ports.comports()
+    print_verbose(f"[INFO] Detected {len(ports)} serial ports to scan.", debug, timestamp=True)
+    print_verbose(f"[DEBUG] : {ports = }", debug)
 
     common_baudrates = [9600, 19200, 38400, 57600, 115200]
 
+    print_verbose("[DEBUG] : Loop ports and baudrates", debug)
     for port in ports:
         baudrate_list = [baudrate] if baudrate is not None else common_baudrates
+
+        print_verbose(f"[DEBUG] : {port.device = }", debug)
         for br in baudrate_list:
             try:
-                with serial.Serial(port.device, baudrate=br, timeout=timeout) as ser:
-                    ser.write(b"*IDN?\n")
-                    time.sleep(0.1)
-                    response = ser.readline().decode(errors="ignore").strip()
+                # with serial.Serial(port.device, baudrate=br, timeout=timeout) as ser:
+                # ser.write(b"*IDN?\n")
+                # time.sleep(0.1)
+                # response = ser.readline().decode(errors="ignore").strip()
+                response = serial_query("*IDN?", port.device, baudrate=br, verbose=verbose, debug=debug)
 
-                    if response:
-                        found_devices.append(
-                            {
-                                "port": port.device,
-                                "description": port.description,
-                                "idn": response,
-                                "baudrate": br,
-                                "is_keithley": "KEITHLEY" in response.upper(),
-                                "status": "response",
-                            }
-                        )
-                        break
-                    else:
-                        found_devices.append(
-                            {
-                                "port": port.device,
-                                "description": port.description,
-                                "idn": "No response to *IDN?",
-                                "baudrate": br,
-                                "is_keithley": False,
-                                "status": "no_idn",
-                            }
-                        )
-                        break
+                if response:
+                    _mnfctr, _model, _sn, _frmwr = response.split(",")
+                    found_devices.append(
+                        {
+                            "port": port.device,
+                            "description": port.description,
+                            "idn": response,
+                            "manufacturer": _mnfctr,
+                            "model": _model,
+                            "serial_number": _sn,
+                            "firmware": _frmwr,
+                            "baudrate": br,
+                            "is_keithley": "KEITHLEY" in response.upper(),
+                            "status": "response",
+                        }
+                    )
+                    break
+                else:
+                    found_devices.append(
+                        {
+                            "port": port.device,
+                            "description": port.description,
+                            "idn": "No response to *IDN?",
+                            "baudrate": br,
+                            "is_keithley": False,
+                            "status": "no_idn",
+                        }
+                    )
+                    break
+
             except Exception:  # Broad catch to handle any serial exceptions (port busy, permission issues, etc.)
                 found_devices.append(
                     {
@@ -65,18 +126,23 @@ def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=Fa
 
     if verbose:
         print_keithley_devices(found_devices)
-    return found_devices
+    return found_devices if found_devices else None
 
 
 def print_keithley_devices(devices):
     """Formats and prints the detected serial devices to the console."""
     if not devices:
-        print("*** No serial devices detected on available serial ports ***")
-        print("Please check your connections and try again.\n")
+        print_verbose("[INFO] *** No serial devices detected on available serial ports ***", timestamp=True)
+        print_verbose("[INFO] Please check your connections and try again.\n", timestamp=True)
         return
 
+    print_verbose(f"[INFO] #### FOUND {len(devices)} SERIAL DEVICES ####", timestamp=True)
+    _n_keithleys = sum(1 for d in devices if d["is_keithley"])
+    print_verbose(f"[INFO] #### FOUND {_n_keithleys} KEITHLEY DEVICES ####\n", timestamp=True)
     print("=" * 100)
-    print(f"{'Port':<12} | {'Baudrate':<8} | {'Status':<10} | {'Identification (IDN)'}")
+    print(
+        f"{'Port':<8} | {'Baudrate':<8} | {'Status':<15} | {'Manufacturer':<15} | {'Model':<15} | {'Serial Number':<15}"
+    )
     print("-" * 100)
     for dev in devices:
         if dev["status"] == "response":
@@ -90,38 +156,45 @@ def print_keithley_devices(devices):
         else:
             status = "[?] Unknown"
         baudrate = dev.get("baudrate", "?")
-        print(f"{dev['port']:<12} | {baudrate:<8} | {status:<10} | {dev['idn']}")
+
+        if dev["is_keithley"]:
+            print(
+                f"{dev['port']:<8} | {baudrate:<8} | {status:<15} | {dev['manufacturer'][0:14]:<15} | {dev['model']:<15} | {dev['serial_number']:<15}"
+            )
+        else:
+            print(f"{dev['port']:<8} | {baudrate:<8} | {status:<15} | {'-':<15} | {'-':<15} | {'-':<15}")
     print("=" * 100, "\n")
 
 
-def scpi_query(cmd, dev, verbose=False):
-    """Sends a SCPI command to the specified device and returns the response."""
-    try:
-        with serial.Serial(dev["port"], baudrate=dev["baudrate"], timeout=0.5) as ser:
-            if verbose:
-                print(f"[COMMAND]: {cmd}")
-            ser.write(f"{cmd}\n".encode())
-            time.sleep(0.1)
-            response = ser.readline().decode(errors="ignore").strip()
-            if response is None or response == "":
-                response = f"No response to {cmd}"
-            if verbose:
-                print(f"[RESPONSE]: {response}")
-            return response
-    except serial.SerialException as e:
-        if verbose:
-            print(f"Error communicating with device on {dev['port']}: {e}")
-        return None
+def print_keithley_properties(dev):
+    """Prints the properties of a detected device in a readable format."""
+
+    print("-" * 100)
+    print(f"Port: {dev['port']}")
+    print(f"Baudrate: {dev.get('baudrate', 'N/A')}")
+    print(f"Description: {dev['description']}")
+    if dev.get("status") == "response":
+        print(f"IDN: {dev.get('idn', 'N/A')}")
+    else:
+        print(f"IDN: {dev.get('idn', 'N/A')} (No valid response)")
+    if dev.get("is_keithley"):
+        print(f"Manufacturer: {dev.get('manufacturer', 'N/A')}")
+        print(f"Model: {dev.get('model', 'N/A')}")
+        print(f"Serial Number: {dev.get('serial_number', 'N/A')}")
+        print(f"Firmware: {dev.get('firmware', 'N/A')}")
+    print("-" * 100, "\n")
 
 
 if __name__ == "__main__":
-    devs = detect_keithley_devices(baudrate=None, verbose=True)
+    devs = detect_keithley_devices(baudrate=None, verbose=True, debug=False)
+
+    if devs is None:
+        print_verbose("[ERROR] : No Keithley devices found. Exiting.", verbose=True, timestamp=True)
+        exit(1)
 
     for dev in devs:
         if dev["is_keithley"]:
-            scpi_query(":CONF?", dev, verbose=True)
-            read_res = scpi_query(":READ?", dev, verbose=True)
-            print("Measurement:", read_res)
-
-            scpi_query(":SENS:CURR:RANG?", dev, verbose=True)
-            scpi_query(":READ?", dev, verbose=True)
+            print_keithley_properties(dev)
+            serial_query(":CONF?", dev["port"], verbose=True, debug=False)
+            read_res = serial_query(":READ?", dev["port"], verbose=True, debug=False)
+            print(f"[RESULT] Raw data length: {read_res.count(',') + 1} data points")  # type: ignore
