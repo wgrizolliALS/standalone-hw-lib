@@ -4,23 +4,46 @@ import time
 from datetime import datetime
 
 
-def print_verbose(msg, verbose=True, timestamp=False):
+def _colorStr(s, color=None, bold=False):
+    color_codes = {
+        "red": "91",
+        "green": "92",
+        "blue": "94",
+        "purple": "95",
+        "cyan": "96",
+    }
+
+    color_code = color_codes.get(color, "")  # type: ignore
+    bold_code = "1;" if bold else ""
+    return f"\033[{bold_code}{color_code}m{s}\033[0m"
+
+
+def print_verbose(msg, verbose=True, timestamp=False, color_messages=False, color=None, bold=False):
     if verbose:
         if timestamp:
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] : {msg}")
-        else:
-            print(msg)
+            msg = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] : {msg}"
+        if color_messages:
+            msg = _colorStr(msg, color=color, bold=bold)
+        print(msg)
 
 
 def serial_query(
-    cmd: str, port: str, baudrate: int = 9600, wait_serial=False, verbose: bool = False, debug: bool = False
+    cmd: str,
+    port: str,
+    baudrate: int = 9600,
+    wait_serial=False,
+    color_messages=True,
+    verbose: bool = False,
+    debug: bool = False,
 ) -> str | None:
     """Sends a string to serial port and returns the response."""
     print_verbose(f"[DEBUG] : Attempting to open serial port {port} at baudrate {baudrate}", debug)
 
     try:
         with serial.Serial(port, baudrate=baudrate, timeout=0.5) as ser:
-            print_verbose(f"[COMMAND] : {cmd}", verbose, timestamp=True)
+            print_verbose(
+                f"[COMMAND] = {cmd}", verbose, timestamp=True, color_messages=color_messages, color="cyan", bold=True
+            )
             ser.write(f"{cmd}\n".encode())
 
             _time_init = time.time()
@@ -33,22 +56,52 @@ def serial_query(
 
             response = ser.readline().decode(errors="ignore").strip()
 
-        if response is None or response == "":
+        if response == "":
+            print_verbose(
+                "[RESPONSE] = [EMPTY PORT]",
+                verbose,
+                timestamp=True,
+                color_messages=color_messages,
+                color="red",
+                bold=True,
+            )
             response = None
+        else:
+            print_verbose(
+                f"[RESPONSE] = {response}",
+                verbose,
+                timestamp=True,
+                color_messages=color_messages,
+                color="green",
+                bold=True,
+            )
 
-        print_verbose(f"[RESPONSE] : {response}", verbose, timestamp=True)
         print_verbose(f"[DEBUG] : {type(response) = }", debug, timestamp=True)
 
         return response
 
     except serial.SerialException as e:
-        print_verbose(f"[ERROR] : Error communicating with device on {port}: {e}", verbose, timestamp=True)
+        print_verbose(
+            f"[ERROR] : Error communicating with device on {port}: {e}",
+            verbose,
+            timestamp=True,
+            color_messages=color_messages,
+            color="red",
+            bold=True,
+        )
         return None
     except TimeoutError as e:
-        print_verbose(f"[ERROR] : {e}", verbose, timestamp=True)
+        print_verbose(f"[ERROR] : {e}", verbose, timestamp=True, color_messages=color_messages, color="red", bold=True)
         return None
     except Exception as e:
-        print_verbose(f"[ERROR] : Unexpected error on {port}: {e}", verbose, timestamp=True)
+        print_verbose(
+            f"[ERROR] : Unexpected error on {port}: {e}",
+            verbose,
+            timestamp=True,
+            color_messages=color_messages,
+            color="red",
+            bold=True,
+        )
         return None
 
 
