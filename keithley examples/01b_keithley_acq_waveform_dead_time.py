@@ -24,51 +24,33 @@ def set_curr_range(port, verbose=True, debug=True):
     return sens_curr_range
 
 
-def reset_instrument(port, verbose=True, debug=True):
-    """Reset the instrument to a known state."""
-    kthu.serial_query("*RST", port, verbose=verbose, debug=debug)
-    time.sleep(0.5)  # Wait for reset to complete
-
-
-def setup_waveform_acquisition(port, num_points=60, nplc=1.0, curr_range=2e-7, verbose=True, debug=True):
+def setup_waveform_acquisition(sport, num_points=60, nplc=1.0, curr_range=2e-7, verbose=True, debug=True):
     setup_recipe = [
-        ":SYST:REM",  # optional: remote mode
-        ":FORM:ELEM READ,TIME",  # return reading and instrument timestamp
-        f":SENS:CURR:RANG {curr_range}",  # fixed current range
-        f":SENS:CURR:NPLC {nplc}",  # correct NPLC command
-        ":SENS:CURR:RANGE:AUTO OFF",  # disable autorange
-        ":SYST:ZCH OFF",  # zero-check off
-        ":SYST:AZERO OFF",  # autozero off
-        ":SENS:AVER:STAT 0",  # averaging off
-        f":TRAC:POIN {num_points}",  # allocate buffer points
-        ":TRAC:POIN:ACT 0",  # clear active points
-        ":TRIG:SOUR IMM",  # immediate/internal trigger
-        ":TRIG:COUNT 1",  # one trigger per sample (no grouping)
-        ":TRAC:FEED:CONT NEXT",  # feed trace on next acquisition (model-specific)
-        ":SYST:TIME:RES ON",  # enable timestamp resolution (model-specific)
+        "*RST",  # Reset the instrument to a known state
+        ":SYST:AZERO 0; :SYST:ZCH OFF",  # Turn off auto-zero and zero check for faster measurements (but more noise)
+        ":FORM:ELEM READ,TIME",  # Configure the data format to return both the reading and the timestamp for each point
+        f":SENS:CURR:RANG {curr_range}",  # Set the current range
+        f":SYST:ZCH OFF; :CURR:NPLC {nplc}; :TRAC:POIN {num_points}; :TRIG:COUN {num_points}; :SYST:TIME:RES; :TRAC:FEED:CONT NEXT",  # Configure the acquisition parameters: turn off zero check, set NPLC, number of points, trigger count, and prepare the trace buffer for the next acquisition
     ]
-
     for cmd in setup_recipe:
-        _ = kthu.serial_query(cmd, port, verbose=verbose, debug=debug)
-        time.sleep(0.05)  # short pause between commands
-
-    return True
+        _ = kthu.serial_query(cmd, sport, verbose=verbose, debug=debug)
+        time.sleep(0.1)
 
 
-def acq_waveform(port, raw=False, reset_timer=False, verbose=True, debug=True):
+def acq_waveform(sport, raw=False, reset_timer=False, verbose=True, debug=True):
 
     print("[INFO] Querying data...")
 
     _time_init = time.time()
 
     if reset_timer:
-        kthu.serial_query(":SYST:TIME:RES", port, verbose=verbose, debug=debug)
+        kthu.serial_query(":SYST:TIME:RES", sport, verbose=verbose, debug=debug)
         print("[INFO] Timer reset with :SYST:TIME:RES command.")
 
-    read_res = kthu.serial_query("INIT", port, verbose=verbose, debug=debug)
+    read_res = kthu.serial_query("INIT", sport, verbose=verbose, debug=debug)
 
     while True:
-        read_res = kthu.serial_query("*OPC?", port, wait_serial=True, verbose=verbose, debug=debug)
+        read_res = kthu.serial_query("*OPC?", sport, wait_serial=True, verbose=verbose, debug=debug)
         if read_res == "1":
             print("[INFO] Acquisition complete.")
             break
@@ -80,7 +62,7 @@ def acq_waveform(port, raw=False, reset_timer=False, verbose=True, debug=True):
 
     print("[INFO] Acquisition COMPLETED. ")
     print("[INFO] DOWLOADING DATA from device...")
-    read_res = kthu.serial_query(":TRAC:DATA?", port, verbose=verbose, debug=debug)
+    read_res = kthu.serial_query(":TRAC:DATA?", sport, verbose=verbose, debug=debug)
 
     print("[INFO] Querying COMPLETED. Data received.")
     kthu.print_verbose(read_res, verbose=debug)
@@ -119,15 +101,37 @@ if __name__ == "__main__":
     SERIALPORT = dev["port"] if dev else None  # type: ignore
 
     # %%
+    _time_Stats = []
+    for NPLC in [10.0, 1.0, 0.1, 0.01]:
+        setup_waveform_acquisition(SERIALPORT, num_points=10, nplc=NPLC, curr_range=2e-7, verbose=True, debug=True)
 
-    setup_waveform_acquisition(SERIALPORT, num_points=10, nplc=1.0, curr_range=2e-7, verbose=True, debug=True)
+        _waveform = acq_waveform(SERIALPORT, verbose=False, debug=False)
+
+        _time_diffs = np.diff(_waveform["Time_S"])
+        _time_Stats.append([NPLC, _time_diffs.mean(), _time_diffs.max(), _time_diffs.min()])
 
     # %%
-    _waveform = acq_waveform(SERIALPORT, verbose=False, debug=False)
+
+    _mess2print = ""
+
+    for NPLC, mean_diff, max_diff, min_diff in _time_Stats:
+        _mess2print += f"{NPLC:^10.2f}|"
+        _mess2print += f"{f'{(NPLC * 1000 / 60.0):.3f} ms':^25}|"
+        _mess2print += f"{f'{(mean_diff * 1e3):.3f} ms':^25}|"
+        _mess2print += f"{f'{((mean_diff - NPLC * 1 / 60.0) * 1e3):.3f} ms':^15}|"
+        _mess2print += f"{f'{((max_diff - NPLC * 1 / 60.0) * 1e3):.3f} ms':^15}|"
+        _mess2print += f"{f'{((min_diff - NPLC * 1 / 60.0) * 1e3):.3f} ms':^15}|"
+        _mess2print += "\n"
+
+    print("=" * 95)
+    print(
+        f"{'NPLC':^10}|{'Int. Time from NPLC':^25}|{'Mean Time Between Points':^25}|{'Mean Dead Time':^15}|{'Max Dead Time':^15}|{'Min Dead Time':^15}|"
+    )
+    print("-" * 95)
+    print(_mess2print)
+    print("=" * 95)
 
     # %%
-    _time_diffs = np.diff(_waveform["Time_S"])
-
     print(f"\n[INFO] Mean time differences between measurements: {_time_diffs.mean():.4f} seconds")
     # %%
 
