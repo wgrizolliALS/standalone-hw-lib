@@ -1,12 +1,15 @@
-# keithley_6487_waveform.py
+# %%
 import time
 import re
+
+import pandas as pd
 
 import keithley_utils as kthu  # your serial helper module; must provide serial_query(cmd, port, verbose, debug)
 
 DEFAULT_MAINS_PERIOD = 1 / 60.0  # set to 1/50.0 if on 50 Hz mains
 
 
+# %%
 def _colorStr(s, color=None, bold=False):
     color_codes = {
         "red": "91",
@@ -279,7 +282,7 @@ def _send_batched(cmds: list, port: str, verbose: bool = True, debug: bool = Fal
         time.sleep(delay)
 
 
-# Helper: parse TRAC:DATA? response formatted as READ,TIME into arrays
+# %% Helper: parse TRAC:DATA? response formatted as READ,TIME into arrays
 def parse_trac_data(raw):
     """
     Parse a comma-separated stream of READ,TIME,READ,TIME,... into lists.
@@ -293,12 +296,19 @@ def parse_trac_data(raw):
         except Exception:
             reads.append(None)
         if i + 1 < len(parts):
-            times.append(parts[i + 1])
-    return reads, times
+            try:
+                times.append(float(parts[i + 1]))
+            except Exception:
+                times.append(None)
+
+    df = pd.DataFrame({"Current_Amps": reads, "Time_Secs": times})
+
+    return df
 
 
-# Example usage in a __main__ block
+# %% Example usage in a __main__ block
 if __name__ == "__main__":
+    # %%
     print(_colorStr("[INFO] Starting Keithley waveform acquisition example...", color="purple"))
 
     try:
@@ -344,8 +354,45 @@ if __name__ == "__main__":
     )
 
     raw = acq_waveform(SERIALPORT, num_points=num_points, verbose=True, debug=False)
-    reads, times = parse_trac_data(raw)
 
-    print(_colorStr(f"[RESULTS] Acquired samples: {len(reads)}", color="green"))
-    for r, t in zip(reads, times):
-        print(r, t)
+    # %%
+    df = parse_trac_data(raw)
+
+    print(_colorStr(f"[RESULTS] Acquired samples: {len(df)}", color="green"))
+
+    print(_colorStr("[RESULTS] DataFrame info:", color="green"))
+    print(df.info())
+
+    # %%
+    act_time = nplc * mains_period * 1000
+    print(
+        _colorStr(
+            f"[RESULTS] Expected acquisition time based on NPLC and mains period: {act_time:.4f} ms", color="blue"
+        )
+    )
+    df["Time_msecs"] = df["Time_Secs"] * 1000
+    time_diffs_ms = df["Time_msecs"].diff().dropna()
+
+    print(_colorStr(f"[RESULTS] Mean time between points: {time_diffs_ms.mean():.4f} ms", color="blue"))
+    print(_colorStr(f"[RESULTS] Max time between points: {time_diffs_ms.max():.4f} ms", color="blue"))
+    print(_colorStr(f"[RESULTS] Min time between points: {time_diffs_ms.min():.4f} ms", color="blue"))
+    print(
+        _colorStr(
+            f"[RESULTS] Mean dead time: {time_diffs_ms.mean() - act_time:.4f} ms, {time_diffs_ms.mean() / act_time - 1:.2%}",
+            color="blue",
+        )
+    )
+    print(
+        _colorStr(
+            f"[RESULTS] Max dead time: {time_diffs_ms.max() - act_time:.4f} ms, {time_diffs_ms.max() / act_time - 1:.2%}",
+            color="blue",
+        )
+    )
+    print(
+        _colorStr(
+            f"[RESULTS] Min dead time: {time_diffs_ms.min() - act_time:.4f} ms, {time_diffs_ms.min() / act_time - 1:.2%}",
+            color="blue",
+        )
+    )
+
+# %%
