@@ -122,6 +122,8 @@ if __name__ == "__main__":
     df = pd.concat(_df_list, ignore_index=True)
 
     df["Time_msecs"] = df["Time_Secs"] * 1000
+    df.to_csv("01b_keithley_waveform_data.csv", index=False, header=True)  # Save raw data to CSV for reference
+
     # %%
     kthu.print_verbose(f"[RESULTS] Acquired samples: {len(df)}", color="green")
 
@@ -176,6 +178,8 @@ if __name__ == "__main__":
 
             # df_post.loc[len(df_post)] = new_row  #
             df_post.loc[len(df_post)] = pd.Series(new_row)  # append new row to summary DataFrame
+
+    df_post.to_csv("01b_keithley_postprocessing.csv", index=False, header=True)  # Save raw data to CSV for reference
 
     # %%
     kthu.print_verbose(f"[RESULTS] Post-Processing Conditions: {len(df)}", color="green")
