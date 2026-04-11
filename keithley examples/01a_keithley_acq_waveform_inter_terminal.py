@@ -1,103 +1,133 @@
 # %%
+"""
+%load_ext autoreload
+%autoreload 2
+"""
 
-import keithley_utils as kthu
-import pandas as pd
-
-# %%
 import matplotlib
 
 matplotlib.use("qtagg")
-# print(matplotlib.backends.backend_registry.list_builtin())
+# print(matplotlib.backends.backend_registry.list_builtin())  # type: ignore
 # matplotlib.use("widget")
-import matplotlib.pyplot as plt
 
 import time
-# %%
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
-devs = kthu.detect_keithley_devices(baudrate=None, verbose=True)
+import keithley_utils as kthu  # your serial helper module;
 
-if devs is None:
-    print("[ERROR] : No Keithley devices found. Exiting.")
-    exit(1)
+POWER_LINE_FREQ = 60.0  # set to 50.0 if on 50 Hz mains
+POWER_LINE_PERIOD = 1 / POWER_LINE_FREQ
 
-# %%
+DEBUG = False
 
-dev = devs[0] if devs else None
-print("[INFO] Using device:")
-kthu.print_keithley_properties(dev)
-
-SERIALPORT = dev["port"]  # type: ignore
-# %%
-_ = kthu.serial_query(":CONF?", SERIALPORT, verbose=True)
 
 # %%
 
-SETUP_RECIPE = [
-    "*RST",
-    ":FORM:ELEM READ,TIME",
-    ":SYST:ZCH OFF; :CURR:NPLC 1.0; :TRAC:POIN 100; :TRIG:COUN 100; :SYST:TIME:RES; :TRAC:FEED:CONT NEXT",
-]
 
-for cmd in SETUP_RECIPE:
-    _ = kthu.serial_query(cmd, SERIALPORT, verbose=True, debug=True)
-    time.sleep(0.1)
+# Helper: parse TRAC:DATA? response formatted as READ,TIME into arrays
+def parse_trac_data(raw):
+    """
+    Parse a comma-separated stream of READ,TIME,READ,TIME,... into lists.
+    Returns (reads: list[float], times: list[float_or_str]).
+    """
+    parts = [p.strip() for p in raw.strip().split(",") if p.strip() != ""]
+    reads, times = [], []
+    for i in range(0, len(parts), 2):
+        reads.append(float(parts[i]))
+
+    for i in range(0, len(parts), 2):
+        times.append(float(parts[i + 1]))
+
+    df = pd.DataFrame({"Current_Amps": reads, "Time_Secs": times})
+
+    return df
+
+
+# %% Example usage in a __main__ block
+if __name__ == "__main__":
+    pass
+    # %% Scan For Instruments and Select Device
+    _total_t_start = time.time()
+    kthu.print_verbose("[INFO] Starting Keithley waveform acquisition example...", color="purple", verbose=True)
+
+    try:
+        devs = kthu.detect_keithley_devices(baudrate=None, verbose=True)
+        kthu.print_verbose("# Scan for hardware ENDED #\n", color="purple")
+
+    except Exception as e:
+        kthu.print_verbose(f"Error during Keithley detection: {e}", color="red")
+
+    SERIALPORT = devs[0]["port"] if devs[0]["port"] else None  # type: ignore
+    if SERIALPORT is None:
+        kthu.print_verbose("[ERROR] No valid serial port found for device.", color="red", bold=True)
+        raise SystemExit(1)
+
+    # %% Reset Instrument and Check for Errors
+
+    _ = kthu.reset_instrument(SERIALPORT, verbose=True)
+
+    # %% Setup Acquisition, Acquire Waveform, Parse Results
+    # %% MAIN LOOP: Setup acquisition, acquire waveform, parse results
+    num_points = 100
+    _sel_range = None
+    nplc = 1.0
+
+    kthu.set_range(SERIALPORT, set_curr_range=_sel_range, nplc=nplc, verbose=True)
+    # %% Zero Instrument and Check for Errors
+
+    zero_val = kthu.zero_instrument(SERIALPORT, verbose=True)
+
+    # %% Setup Acquisition
+    kthu.setup_waveform_acquisition(
+        SERIALPORT,
+        num_points=num_points,
+        verbose=True,
+        debug=False,
+    )
+
+    # %% Acquire Waveform, Parse Results
+    _total_t_start = time.time()
+    raw = kthu.acq_waveform(SERIALPORT, verbose=True)
+
+    final_range = kthu.get_curr_range(SERIALPORT, verbose=True)
+
+    kthu.print_verbose(
+        f"[INFO] Acquisition Finished. Elapsed time: {time.time() - _total_t_start:.2f} s", color="purple", bold=True
+    )
+
+    df = parse_trac_data(raw)
+    df["NPLC"] = nplc
+    df["Range"] = final_range
+
+    df["Time_msecs"] = df["Time_Secs"] * 1000
+
+    kthu.print_verbose(f"[RESULTS] Acquired samples: {len(df)}", color="green")
+    # %%
+    kthu.print_verbose("[RESULTS] Samples DataFrame Head 10:", color="green", bold=True)
+    print(df.head(10))
+    kthu.print_verbose("[RESULTS] Samples DataFrame info:", color="green", bold=True)
+    print(df.info())
+
+    # %% Post Processing
+
+    plt.figure()
+    plt.plot(df["Time_msecs"], df["Current_Amps"], ".-")
+    plt.title(f"Waveform Acquisition (Range: {final_range} A, NPLC: {nplc})")
+    plt.xlabel("Time (ms)")
+    plt.ylabel("Current (A)")
+    plt.grid()
+    plt.show()
+
+    # %%
+
+    plt.figure()
+    plt.plot(df["Time_msecs"], np.diff(df["Time_msecs"], append=np.nan) - nplc * POWER_LINE_PERIOD * 1000, ".-")
+    plt.title(f"Waveform Acquisition (Range: {final_range} A, NPLC: {nplc})")
+    plt.xlabel("Time (ms)")
+    plt.ylabel("Time Diff from Expected (ms)")
+    plt.grid()
+    plt.show()
 
 # %%
-
-print("[INFO] Querying data...")
-
-_time_init = time.time()
-CMD = "INIT"
-read_res = kthu.serial_query(CMD, SERIALPORT, verbose=True, debug=True)
-
-#
-CMD = "*OPC?"
-# CMD = "*OPC"
-
-while True:
-    read_res = kthu.serial_query(CMD, SERIALPORT, wait_serial=True, verbose=True, debug=True)
-    if read_res == "1":
-        print("[INFO] Acquisition complete.")
-        break
-    else:
-        print("[INFO] Waiting for acquisition to complete... {:.3f} seconds elapsed".format(time.time() - _time_init))
-        time.sleep(0.5)
-
-
-print("[INFO] Acquisition COMPLETED. ")
-print("[INFO] DOWLOADING DATA from device...")
-CMD = ":TRAC:DATA?"
-read_res = kthu.serial_query(CMD, SERIALPORT, verbose=True, debug=True)
-
-print("[INFO] Querying COMPLETED. Data received:")
-print("Measurement:", read_res)
-print(f"Raw data length: {read_res.count(',') + 1} data points")  # type: ignore
-
-# %% Retrieve data and parse into DataFrame
-# 1. Split and convert to a flat list of floats
-full_list = [float(x) for x in read_res.split(",")]  # type: ignore
-
-# 2. Use list slicing to separate the pairs
-# [start:stop:step]
-currents = full_list[0::2]  # Start at 0, take every 2nd element
-times = full_list[1::2]  # Start at 1, take every 2nd element
-
-# 3. Create the DataFrame directly from a dictionary
-df = pd.DataFrame({"Current_A": currents, "Time_S": times})
-
-# %%
-
-df.info()
-
-# %%
-
-df.plot(
-    x="Time_S",
-    y="Current_A",
-    title="Keithley 6514 Burst Acquisition",
-    xlabel="Time (s)",
-    ylabel="Current (A)",
-    grid=True,
-    marker=".",
-)
-plt.show(block=True)
