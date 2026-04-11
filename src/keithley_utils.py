@@ -18,11 +18,11 @@ def _colorStr(s, color=None, bold=False):
     return f"\033[{bold_code}{color_code}m{s}\033[0m"
 
 
-def print_verbose(msg, verbose=True, timestamp=False, color_messages=False, color=None, bold=False):
+def print_verbose(msg, verbose=True, timestamp=False, color=None, bold=False):
     if verbose:
         if timestamp:
             msg = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] : {msg}"
-        if color_messages:
+        if color is not None or bold:
             msg = _colorStr(msg, color=color, bold=bold)
         print(msg)
 
@@ -32,23 +32,21 @@ def serial_query(
     port: str,
     baudrate: int = 9600,
     wait_serial=False,
-    color_messages=True,
     verbose: bool = False,
     debug: bool = False,
+    wait_before_read: float = 0.1,
 ) -> str | None:
     """Sends a string to serial port and returns the response."""
     print_verbose(f"[DEBUG] : Attempting to open serial port {port} at baudrate {baudrate}", debug)
 
     try:
         with serial.Serial(port, baudrate=baudrate, timeout=0.5) as ser:
-            print_verbose(
-                f"[COMMAND] = {cmd}", verbose, timestamp=True, color_messages=color_messages, color="cyan", bold=True
-            )
+            print_verbose(f"[COMMAND] = {cmd}", verbose, timestamp=True, color="cyan", bold=True)
             ser.write(f"{cmd}\n".encode())
 
             _time_init = time.time()
             while wait_serial and ser.in_waiting == 0:
-                time.sleep(0.25)
+                time.sleep(wait_before_read)
                 print_verbose(f"[DEBUG] : Waiting for response from {cmd}...", debug, timestamp=True)
 
                 if time.time() - _time_init >= 5 * ser.timeout:  # type: ignore
@@ -61,9 +59,8 @@ def serial_query(
                 "[RESPONSE] = [EMPTY PORT]",
                 verbose,
                 timestamp=True,
-                color_messages=color_messages,
-                color="red",
-                bold=True,
+                color="cyan",
+                bold=False,
             )
             response = None
         else:
@@ -71,7 +68,6 @@ def serial_query(
                 f"[RESPONSE] = {response}",
                 verbose,
                 timestamp=True,
-                color_messages=color_messages,
                 color="green",
                 bold=True,
             )
@@ -85,20 +81,18 @@ def serial_query(
             f"[ERROR] : Error communicating with device on {port}: {e}",
             verbose,
             timestamp=True,
-            color_messages=color_messages,
             color="red",
             bold=True,
         )
         return None
     except TimeoutError as e:
-        print_verbose(f"[ERROR] : {e}", verbose, timestamp=True, color_messages=color_messages, color="red", bold=True)
+        print_verbose(f"[ERROR] : {e}", verbose, timestamp=True, color="red", bold=True)
         return None
     except Exception as e:
         print_verbose(
             f"[ERROR] : Unexpected error on {port}: {e}",
             verbose,
             timestamp=True,
-            color_messages=color_messages,
             color="red",
             bold=True,
         )
