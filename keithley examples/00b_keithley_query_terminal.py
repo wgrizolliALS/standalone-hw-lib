@@ -1,5 +1,7 @@
 # %%
 
+import time
+
 import keithley_utils as kthu
 
 from datetime import datetime
@@ -28,15 +30,16 @@ _help_text += """
 # Numbered quick-command menu (type #<n> to send)
 _numbered_commands = [
     ("*IDN?", "Query device identification"),
-    ("*OPC?", "Query operation complete status"),
+    (":SYST:ERR?", "Query system error queue"),
+    ("*OPC?", "Query operation complete status. 1: complete, 0: busy"),
     (":READ?", "Query the latest measurement"),
     (":TRAC:DATA?", "Query trace data"),
-    (":SYST:ERR?", "Query system error queue"),
-    (":SYST:ZCH OFF", "Turn off zero check (for faster measurements)"),
+    (":SYST:ZCH?", "Query zero check status. 1: on, 0: off"),
     (":SYST:ZCH ON", "Turn on zero check"),
-    (":SYST:ZCH?", "Query zero check status"),
+    (":SYST:ZCH OFF", "Turn off zero check (for faster measurements)"),
     (":SYST:TIME:RESET", "Reset system time counter"),
     (":SYST:TIME?", "Query system time since last reset in seconds"),
+    (":SENS:CURR:RANG:AUTO?", "Query current range autorange status. 1: on, 0: off"),
     (":SENS:CURR:RANG:AUTO ON", "Enable current range autorange"),
     (":SENS:CURR:RANG:AUTO OFF", "Disable current range autorange"),
     (":SENS:CURR:RANG?", "Query current range setting"),
@@ -112,9 +115,21 @@ def handle_input(s: str) -> bool:
             kthu.serial_query(cmd, SERIAL_PORT, verbose=True)
         except Exception:
             print(_colorStr("[ERROR] invalid quick-command index", color="red", bold=True))
-        return True
     else:
         kthu.serial_query(s, SERIAL_PORT, verbose=True)
+
+    while True:
+        time.sleep(0.1)  # small delay to ensure command is processed before next query
+        _res = kthu.serial_query(":SYST:ERR?", SERIAL_PORT, verbose=True)
+        if _res is not None and "0," in _res[0:2]:
+            break
+        else:
+            kthu.print_verbose(
+                "[WARNING] Instrument reports error after command. Check error ABOVE for details.",
+                verbose=True,
+                color="red",
+                bold=True,
+            )
     return True
 
 
@@ -148,6 +163,9 @@ if __name__ == "__main__":
             if not handle_input(s):
                 break
     except KeyboardInterrupt:
+        kthu.serial_query(":SYST:ERR?", SERIAL_PORT, verbose=True)  #
+        kthu.serial_query(":ABORT", SERIAL_PORT, verbose=True)  #
+        kthu.serial_query(":SYST:ERR?", SERIAL_PORT, verbose=True)  #
         print("\n[INFO] Exiting.")
 
 # %%
