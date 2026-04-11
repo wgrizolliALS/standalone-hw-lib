@@ -3,6 +3,8 @@ import serial.tools.list_ports
 import time
 from datetime import datetime
 
+DEBUG = False
+
 
 def _colorStr(s, color=None, bold=False):
     color_codes = {
@@ -97,6 +99,67 @@ def serial_query(
             bold=True,
         )
         return None
+
+
+def serial_batched(
+    cmds: list,
+    port: str,
+    verbose: bool = True,
+    debug: bool = False,
+    send_ind: bool = False,
+    wait_between_cmds: float = 0.1,
+    check_errors: bool = True,
+) -> str | None:
+    """Send consecutive write-only commands batched with ';' where safe.
+
+    Commands that are queries or contain read-like tokens are sent individually.
+    """
+
+    if any("?" in _str for _str in cmds) or send_ind:
+        for cmd in cmds:
+            res = serial_query(cmd, port, verbose=verbose, debug=DEBUG)
+            if check_errors:
+                time.sleep(wait_between_cmds)
+                check_inst_errors(port, verbose=verbose)
+            time.sleep(wait_between_cmds)
+    else:
+        batch_cmd = ";".join(cmds)
+        res = serial_query(batch_cmd, port, verbose=verbose, debug=DEBUG)
+        if check_errors:
+            time.sleep(wait_between_cmds)
+            check_inst_errors(port, verbose=verbose)
+        time.sleep(wait_between_cmds)
+    return res
+
+
+def query_and_check(
+    cmd: str,
+    port: str,
+    verbose: bool = True,
+    debug: bool = False,
+    wait_between_cmds: float = 0.1,
+    check_errors: bool = True,
+) -> str | None:
+    """Send consecutive write-only commands batched with ';' where safe.
+
+    Commands that are queries or contain read-like tokens are sent individually.
+    """
+
+    _res = serial_query(cmd, port, verbose=verbose, debug=DEBUG)
+    if check_errors:
+        time.sleep(wait_between_cmds)
+        check_inst_errors(port, verbose=verbose)
+        time.sleep(wait_between_cmds)
+    return _res
+
+
+def check_inst_errors(port, verbose=True):
+    """Query instrument error queue and print any errors."""
+    while True:
+        err = serial_query(":SYST:ERR?", port, verbose=verbose, debug=DEBUG)
+        if err is None or err.startswith("0,"):
+            break
+        print_verbose(f"[INSTR ERROR] {err}", verbose=verbose, timestamp=True, color="red", bold=True)
 
 
 def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=False, debug=False) -> list[dict] | None:
@@ -230,6 +293,415 @@ def print_keithley_properties(dev):
         print(f"Serial Number: {dev.get('serial_number', 'N/A')}")
         print(f"Firmware: {dev.get('firmware', 'N/A')}")
     print("-" * 100, "\n")
+
+
+def reset_instrument(port, verbose=True, debug=True):
+    """Reset instrument to a known state."""
+    print_verbose("[INFO] Resetting instrument...", color="purple", verbose=verbose)
+    _start_t = time.time()
+    cmds = [
+        "*RST",  # Reset to known state
+        ":SYST:REM",  # Remote mode for faster serial response; comment out if you want to use front panel after this
+        ":FORM:ELEM READ,TIME",  # Set Format.
+    ]  # Reset to known state, then remote mode for faster serial response
+    serial_batched(cmds, port, verbose=verbose, debug=DEBUG)
+    print_verbose(
+        f"[INFO] Reset complete. Time elapsed: {time.time() - _start_t:.2f} s", color="purple", verbose=verbose
+    )
+
+    return True
+
+
+def is_autorange_ON(port, verbose=True, debug=True) -> bool:
+    """Query autorange status."""
+
+    print_verbose(
+        "[INFO] Checking autorange status...",
+        verbose=verbose,
+        timestamp=True,
+        color="purple",
+    )
+
+    _resp = query_and_check(":SENS:CURR:RANG:AUTO?", port, verbose=verbose, debug=True)
+    autorange_status = _resp.strip() if _resp is not None else None
+
+    if autorange_status is not None and autorange_status == "0":
+        print_verbose("[INFO] Autorange status: OFF", color="purple", verbose=verbose)
+        return False
+    else:
+        print_verbose("[INFO] Autorange status: ON", color="purple", verbose=verbose)
+        return True
+
+
+def set_autorange(port, enable=True, verbose=True, debug=True):
+    """Enable or disable autorange."""
+    if enable:
+        print_verbose("[INFO] Enabling autorange...", color="purple", verbose=verbose)
+        serial_batched([":SENS:CURR:RANG:AUTO ON"], port, verbose=verbose, debug=DEBUG)
+    else:
+        print_verbose("[INFO] Disabling autorange...", color="purple", verbose=verbose)
+        serial_batched([":SENS:CURR:RANG:AUTO OFF"], port, verbose=verbose, debug=DEBUG)
+
+    return is_autorange_ON(port, verbose=verbose, debug=debug)
+
+
+def get_curr_range(port, verbose=True, debug=True) -> float:
+    """Query current range."""
+    if is_autorange_ON(port, verbose=verbose, debug=debug):
+        return -9999.00  # sentinel value to indicate autorange is ON and numeric range is not fixed
+    else:
+        print_verbose("[INFO] Autorange is OFF, querying current range...", color="purple", verbose=verbose)
+        _resp = query_and_check(":SENS:CURR:RANG?", port, verbose=verbose, debug=DEBUG)
+        if _resp is None:
+            print_verbose(
+                "[WARNING] Received empty response when querying current range. Returning None.",
+                color="red",
+                verbose=verbose,
+            )
+            raise RuntimeError("Failed to query current range; received empty response.")
+        curr_range = float(_resp.strip())
+        print_verbose(f"[INFO] Current range: {curr_range}", color="purple", verbose=verbose)
+        return curr_range
+
+
+def get_curr_NPLC(port, verbose=True, debug=True) -> float:
+    """Query current NPLC."""
+    print_verbose("[INFO] Querying current NPLC...", color="purple", verbose=verbose)
+    _resp = query_and_check(":SENS:CURR:NPLC?", port, verbose=verbose, debug=DEBUG)
+    if _resp is None:
+        print_verbose(
+            "[WARNING] Received empty response when querying current NPLC. Returning None.",
+            color="red",
+            verbose=verbose,
+        )
+        raise RuntimeError("Failed to query current NPLC; received empty response.")
+    curr_nplc = float(_resp.strip())
+    print_verbose(f"[INFO] Current NPLC: {curr_nplc}", color="purple", verbose=verbose)
+    return curr_nplc
+
+
+def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=True) -> tuple[float, float]:
+    """
+    Enable autorange briefly so the instrument selects a range, read one measurement,
+    query the selected range, then lock it and return numeric range.
+
+    AUTORRANGE IS ALWAYS OFF AFTER THIS FUNCTION.
+    """
+    print_verbose("[INFO] Starting autorange selection...", verbose=verbose, timestamp=True, color="purple")
+    _start_t = time.time()
+
+    cmds = [
+        ":SYST:ZCH OFF",  # turn off zero check for faster readings
+        ":SYST:AZERO OFF",  # turn off autozero for faster readings
+        ":SENS:AVER:STAT 0",  # turn off averaging for faster readings
+    ]
+    serial_batched(cmds, port, verbose=verbose, debug=DEBUG)
+
+    if set_curr_range is None:
+        print_verbose(
+            "[INFO] Using AUTORANGE to select initial range based on zero reading...\n"
+            + f"[INFO] AUTORRANGE ON, NPLC = {nplc}...",
+            verbose=verbose,
+            timestamp=True,
+            color="purple",
+        )
+        cmds = [
+            f":SENS:CURR:NPLC {nplc}",
+            ":SENS:CURR:RANGE:AUTO ON",  # enable autorange to let instrument select appropriate range based on zero reading
+        ]
+    elif isinstance(set_curr_range, float):
+        print_verbose(
+            "[INFO] Using specified range. AUTORANGE is OFF...\n"
+            + f"[INFO] AUTORRANGE OFF, NPLC = {nplc}, RANGE SET POINT = {set_curr_range}...",
+            verbose=verbose,
+            timestamp=True,
+            color="purple",
+        )
+        cmds = [
+            f":SENS:CURR:NPLC {nplc}",
+            ":SENS:CURR:RANGE:AUTO OFF",  # disable autorange to lock the range
+            f":SENS:CURR:RANG {set_curr_range}",
+        ]
+    else:
+        raise ValueError(f"Invalid curr_range value: {set_curr_range}, type {type(set_curr_range)}")
+
+    serial_batched(cmds, port, verbose=verbose, debug=DEBUG)
+
+    # Perform a single read to let instrument choose range
+    _t_read_start = time.time()
+
+    print_verbose(
+        "[INFO] Performing initial read to let instrument choose range OR check overflow...",
+        verbose=verbose,
+        timestamp=True,
+        color="purple",
+    )
+
+    while True:
+        _ans = query_and_check(
+            ":READ?",
+            port,
+            wait_between_cmds=1.0,  # wait longer after :READ? to give instrument time to process and update range if needed
+            check_errors=False,
+            verbose=verbose,
+            debug=DEBUG,
+        )
+
+        if _ans is not None:
+            break
+
+        print_verbose(
+            "[INFO] Empty response to :READ?....",
+            verbose=verbose,
+            timestamp=True,
+            color="purple",
+        )
+
+    if set_curr_range is None:
+        # Lock the detected range and turn autorange off
+        print_verbose(
+            "[INFO] Locking range at detected value and turning autorange off...",
+            verbose=verbose,
+            timestamp=True,
+            color="purple",
+        )
+        serial_batched([":SENS:CURR:RANGE:AUTO OFF"], port, verbose=verbose, debug=DEBUG)
+
+    # Query the selected numeric range
+    print_verbose(
+        "[INFO] Querying Range and NPLC selected by INSTRUMENT...", verbose=verbose, timestamp=True, color="purple"
+    )
+
+    rng_val = get_curr_range(port, verbose=verbose, debug=DEBUG)
+
+    if rng_val > 0.0:  # check if autorange is still ON based on sentinel value
+        print_verbose(
+            "[INFO] Autorange is OFF as expected.",
+            verbose=True,
+            timestamp=True,
+            color="green",
+        )
+    else:
+        print_verbose(
+            "[WARNING] Autorange is ON, unexpected behavior.",
+            verbose=verbose,
+            timestamp=True,
+            color="red",
+        )
+        raise RuntimeError("Autorange should be OFF after range selection, but query indicates it is still ON.")
+
+    nplc_val = get_curr_NPLC(port, verbose=verbose, debug=DEBUG)
+
+    print_verbose(
+        "[INFO] Autorange selection complete. Time elapsed: {:.2f} s".format(time.time() - _start_t),
+        verbose=verbose,
+        timestamp=True,
+        color="purple",
+    )
+
+    return rng_val, nplc_val
+
+
+def zero_instrument(
+    port,
+    verbose=True,
+):
+    """
+    If curr_range is None, auto-select range first. Then take one zero reading
+    """
+    _start_t = time.time()
+    print_verbose("[INFO] Starting zero measurement...", verbose=verbose, timestamp=True, color="purple")
+
+    cmds = [  # From Manual pg 3-6
+        # ":*RST",
+        ":SYST:TIME:RESET",
+        ":SYST:ZCH ON",
+        ":INIT",
+        ":SYST:ZCOR:STAT OFF",
+        ":SYST:ZCOR:ACQ",
+        ":SYST:ZCH OFF",
+        ":SYST:ZCOR ON",
+    ]
+
+    serial_batched(cmds, port, verbose=verbose, debug=DEBUG, check_errors=True)
+
+    t_read = time.time()
+
+    while True:
+        resp = query_and_check(
+            ":READ?",
+            port,
+            wait_between_cmds=1.0,  # wait longer after :READ? to give instrument time to process and update range if needed
+            check_errors=False,
+            verbose=verbose,
+            debug=DEBUG,
+        )
+        if resp is not None:
+            break
+
+        print_verbose(
+            "[INFO] Empty response to :READ? Repeating...",
+            verbose=verbose,
+            timestamp=True,
+            color="purple",
+        )
+
+    print_verbose(f"[DEBUG] Final :READ? completed in {time.time() - t_read:.3f}s", verbose=DEBUG, timestamp=True)
+
+    if resp is not None and "A" in resp:
+        zero_val = resp.strip().replace("A", "")
+    elif resp is not None and "," in resp:
+        zero_val = resp.rsplit(",")[0].strip()
+    else:
+        zero_val = resp.strip()
+
+    try:
+        zero_val = float(zero_val)
+    except ValueError:
+        zero_val = None
+
+    print_verbose(
+        "[INFO] Zero measurement complete.\n" + f"[INFO] Zero value: {zero_val}.",
+        verbose=verbose,
+        timestamp=True,
+        color="green",
+    )
+    print_verbose(
+        f"[INFO] Zeroing instrument... ENDED. Time elapsed: {time.time() - _start_t:.2f} s",
+        verbose=verbose,
+        timestamp=True,
+        color="purple",
+    )
+
+    return zero_val
+
+
+def setup_read_acquisition(port, points_for_stat=1, verbose=True, debug=True):
+    """
+    Prepare instrument for single-point acquisition with timestamps.
+    """
+    print_verbose("[INFO] Setting up single-point acquisition...", color="purple", verbose=verbose)
+    _start_t = time.time()
+
+    # Note that, according to manual pg 12-2
+    # when #CONF is executed, the 6487 is configured as follows:
+    # ▪ All controls related to the selected function are defaulted to the *RST values.
+    # ▪ The event control sources of the trigger model are set to immediate.
+    # ▪ The arm and trigger count values of the trigger model are set to one.
+    # ▪ The delay of the trigger model is set to zero.
+    # ▪ The 6487 is placed in the idle state.
+    # ▪ All math calculations are disabled.
+    # ▪ Buffer operation is disabled. A storage operation presently in process will be aborted.
+    # ▪ Autozero is enabled.
+
+    serial_batched([":CONF:CURR;:CONF?"], port, verbose=verbose, debug=DEBUG)
+
+    print_verbose(
+        f"[INFO] Single-point acquisition setup complete. Time elapsed: {time.time() - _start_t:.2f} s",
+        color="purple",
+        verbose=verbose,
+    )
+    return True
+
+
+def setup_waveform_acquisition(port, num_points=60, verbose=True, debug=True):
+    """
+    Prepare instrument for buffered waveform acquisition with timestamps.
+    """
+
+    print_verbose("[INFO] Setting up waveform acquisition...", color="purple", verbose=verbose)
+    _start_t = time.time()
+
+    setup_recipe = [  # following pg 6-8 from manual
+        # ":FORM:ELEM READ,TIME",
+        # ":SENS:CURR:RANGE:AUTO OFF",
+        f":TRIG:COUNT {num_points}",  # single-trigger sampling for even spacing
+        f":TRAC:POIN {num_points}",  # specify number of readings to store: 1 to 3000
+        ":TRAC:FEED SENS",  # Store raw input readings (as opposed to calculated values like avg and max/min).
+        ":TRAC:FEED:CONT NEXT",  # `NEXT` Enables the buffer. `NEVer disable it.
+    ]
+    serial_batched(setup_recipe, port, verbose=verbose, debug=DEBUG)
+
+    print_verbose(
+        f"[INFO] Waveform acquisition setup complete. Time elapsed: {time.time() - _start_t:.2f} s",
+        color="purple",
+        verbose=verbose,
+    )
+
+    return True
+
+
+def acq_read(port, verbose=True, debug=True):
+    t_read = time.time()
+
+    resp = query_and_check(":READ?", port, verbose=verbose, debug=DEBUG)
+    print_verbose(f"[DEBUG] Final :READ? completed in {time.time() - t_read:.3f}s", verbose=debug, timestamp=True)
+
+    if resp is None:
+        print_verbose(
+            "[WARNING] Received empty response to :READ? Returning None.",
+            color="red",
+            verbose=verbose,
+        )
+        return None
+
+    return resp
+
+
+def acq_waveform(port, poll_interval=0.5, verbose=True, debug=True):
+    """
+    Wait for buffer to fill then read buffered data (readings + timestamps).
+    Returns raw response string from :TRAC:DATA?; caller should parse into values/times.
+    """
+
+    print_verbose(
+        "[INFO] Acquiring waveform...",
+        verbose=verbose,
+        timestamp=True,
+        color="purple",
+    )
+
+    _start_total_time = time.time()
+
+    _start_acq_time = time.time()
+
+    # Arm acquisition
+    query_and_check(":INIT", port, verbose=verbose, debug=DEBUG)
+
+    while True:
+        resp = query_and_check(":TRAC:POIN:ACT?", port, verbose=True)
+
+        if resp is not None:
+            break
+        print_verbose(
+            f"[INFO] Waiting for acquisition to complete... time elapsed: {time.time() - _start_acq_time:.2f}s",
+            color="purple",
+            verbose=verbose,
+        )
+        time.sleep(poll_interval)
+
+    print_verbose(
+        f"[INFO] Acquisition COMPLETED... time elapsed: {time.time() - _start_acq_time:.2f}s",
+        color="purple",
+        verbose=verbose,
+    )
+
+    print_verbose(
+        "[INFO] Download data from instrument...",
+        color="purple",
+        verbose=verbose,
+    )
+
+    # Read all buffered readings and timestamps in one transfer
+    raw = query_and_check(":TRAC:DATA?", port, verbose=verbose, debug=DEBUG)
+
+    print_verbose(
+        f"[INFO] Waveform acquisition complete. Data Download COMPLETED. Time elapsed: {time.time() - _start_total_time:.2f} s.",
+        color="purple",
+        verbose=verbose,
+    )
+
+    return raw
 
 
 if __name__ == "__main__":
