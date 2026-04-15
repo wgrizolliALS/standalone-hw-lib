@@ -11,24 +11,30 @@ Summary:
 
 """
 
-import time
+# %%
+from datetime import datetime
 
 # --- THE DETECTOR CLASS ---
 from ophyd_labjack_t8 import LabJackT8
 
 
+def datenow_str():
+    return datetime.now().isoformat(sep=" ", timespec="milliseconds")
+
+
+# %%
 # --- THE STANDALONE TEST ---
-def test_detector():
-    print("[INFO] Starting Detector Test with Ophyd...")
+def main():
+    print(f"[INFO] {datenow_str()}: Starting Detector Test with Ophyd...")
     det = LabJackT8(name="test_lj", channels=[0, 1])
-    print("[INFO] ophyd LabJackT8 instance created with channels: ", det.active_channels)
+    print(f"[INFO] {datenow_str()}: ophyd LabJackT8 instance created with channels: ", det.active_channels)
 
     for i in range(3):
-        print(f"\n[INFO] Point {i + 1}:")
+        print(f"\n[INFO] {datenow_str()}: Point {i + 1}:")
 
-        print("[INFO] Triggering the detector...")
+        print(f"[INFO] {datenow_str()} Triggering the detector...")
         status = det.trigger()
-        print("[INFO] Detector triggered, waiting for acquisition to complete...")
+        print(f"[INFO] {datenow_str()}: Detector triggered, waiting for acquisition to complete...")
 
         # Wait for the trigger to finish
         count = 0
@@ -42,14 +48,16 @@ def test_detector():
         # Check values
         readings = det.read()
         for key, val in readings.items():
-            print(f"[RESULT] {key}: {val['value']}")  # type: ignore
+            print(f"[RESULT] {datenow_str()}: {key}: {val['value']}")  # type: ignore
 
     if det.handle:
         det.close()
-        print("[INFO] Detector connection closed.")
+        print(f"[INFO] {datenow_str()}: Detector connection closed.")
 
     print("[INFO] Test Complete.")
 
 
 if __name__ == "__main__":
-    test_detector()
+    main()
+
+# %%
