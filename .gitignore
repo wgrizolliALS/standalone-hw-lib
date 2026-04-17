@@ -20,3 +20,4 @@
 # Override: Specifically ignore these folders and all their contents
 gitIgnored/
 BKP/
+.agent.md
