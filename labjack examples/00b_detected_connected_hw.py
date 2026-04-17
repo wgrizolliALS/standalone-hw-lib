@@ -5,16 +5,13 @@ installed and that the system can communicate with the hardware.
 """
 
 # After running 'pip install -e .', you can import directly from the modules in src/
-import labjackT8_utils as lju
+# import labjackT8_utils as lju
+import labjack_t8_ophyd as ljt8o
 
 if __name__ == "__main__":
     print("\n### Scan for LabJacks ###")
     try:
-        devices = lju.detect_labjacks()
-        print("# Scan ENDED #\n")
-        if devices:
-            print(f"Found {len(devices)} device(s):")
-            lju.print_devices(devices)
-        print("\n")
+        devices = ljt8o.detect_labjacks(verbose=True)
+        print("### Scan ENDED ###\n")
     except Exception as e:
         print(f"Error during LabJack detection: {e}")

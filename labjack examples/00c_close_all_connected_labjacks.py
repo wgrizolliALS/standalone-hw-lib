@@ -3,6 +3,6 @@ Simple script to close all open connections to LabJack devices. This can be usef
 
 """
 
-import labjackT8_utils as t8u
+import labjack_t8_ophyd as ljt8o
 
-t8u.close_all_labjacks()
+ljt8o.close_all_labjacks(verbose=True)
