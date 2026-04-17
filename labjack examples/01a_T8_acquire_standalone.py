@@ -9,7 +9,7 @@ LJM library in Python. It demonstrates how to:
 **Note 1**: Adjust the acquisition parameters (channels, sample rate, etc.) as needed
 for your specific use case and device capabilities.
 
-**Note 2**: This is uses only the LJM library, which is the recommended way to
+**Note 2**: This example uses only the LJM library, which is the recommended way to
 interface with LabJack devices in Python. There is also a lower-level library called
 LJME that can be used for more direct control, but LJM provides a more user-friendly
 API and is generally sufficient for most applications.
@@ -109,6 +109,9 @@ ranges_per_channel = [10.0, 10.0, 3.0, 1.0, 0.010]  # set each channel to a spec
 # channels = ["AIN0"]  # use names to avoid ambiguity
 scans_per_read = 256  # chunk size per eStreamRead (reasonable default)
 timeout_sec = 5.0  # safety timeout for acquisition
+
+
+num_ch = len(channels)
 # ----------------------------------
 
 # %% Set the range for each channel. This is important to ensure you get the best resolution for your expected signal levels.
@@ -128,7 +131,7 @@ for i, ch in enumerate(channels):
 print(f"\n[INFO] Requesting {num_samples} scans at {sample_rate} Hz from {num_ch} channels...")
 # %% map names to addresses. Needed for streaming API. Also get types for reference.
 aAddresses, aTypes = ljm.namesToAddresses(len(channels), channels)
-num_ch = len(aAddresses)
+
 
 print("\n[INFO] Channels info:")
 print("\t- Channels:", channels)
@@ -211,7 +214,7 @@ print(f"[INFO] Time range: {times[0]:.6f} to {times[-1]:.6f} seconds (session ti
 
 
 df = pd.DataFrame(_arr_data, columns=["Time"] + channels)
-# %%
+# %% convert to pandas
 
 df = pd.DataFrame(_arr_data, columns=["Time"] + channels)
 _arr_data = None
