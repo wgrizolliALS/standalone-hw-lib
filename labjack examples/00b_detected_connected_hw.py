@@ -5,7 +5,6 @@ installed and that the system can communicate with the hardware.
 """
 
 # After running 'pip install -e .', you can import directly from the modules in src/
-# import labjackT8_utils as lju
 import labjack_t8_ophyd as ljt8o
 
 if __name__ == "__main__":
