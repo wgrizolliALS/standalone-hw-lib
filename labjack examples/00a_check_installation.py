@@ -8,7 +8,7 @@ import sys
 from labjack import ljm
 
 # This library
-import labjack_utils as lju
+import labjackT8_utils as lju
 
 # %%
 
@@ -19,7 +19,7 @@ print("\n### labjack python library version: " + ljm.__version__ + " ###")
 # Print the installation path of the LJM library
 print(f"LJM Library Location: {os.path.dirname(ljm.__file__)}")
 
-# Print the installation path of the labjack_utils library
-print(f"\nlabjack_utils Library Location: {os.path.dirname(lju.__file__)}\n")
+# Print the installation path of the labjackT8_utils library
+print(f"\nlabjackT8_utils Library Location: {os.path.dirname(lju.__file__)}\n")
 
 ljm.closeAll()  # Close any open connections just in case

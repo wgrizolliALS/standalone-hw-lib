@@ -5,7 +5,7 @@ installed and that the system can communicate with the hardware.
 """
 
 # After running 'pip install -e .', you can import directly from the modules in src/
-import labjack_utils as lju
+import labjackT8_utils as lju
 
 if __name__ == "__main__":
     print("\n### Scan for LabJacks ###")
