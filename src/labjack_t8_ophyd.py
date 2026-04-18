@@ -117,6 +117,7 @@ class LabJackT8(Device):
 
         # Backwards-compatible ranges dict and generic writes dict
         self.ranges = ranges or {}
+        self.actual_range = {}
         self.writes = writes or {}
         self.writes_raise = bool(writes_raise)
 
@@ -170,7 +171,8 @@ class LabJackT8(Device):
                     ch = k
                 else:
                     ch = str(k)
-                self.set_range(ch, float(v), verify=False, raise_on_mismatch=self.writes_raise)
+                actual_range = self.set_range(ch, float(v), verify=True)
+                self.actual_range[ch] = actual_range
                 if self.verbose:
                     print(f"[INFO] Set AIN range {ch} = {v}")
 
@@ -435,8 +437,6 @@ class LabJackT8(Device):
         value: float,
         verify: bool = True,
         delay: float = 0.05,
-        tol: float = 1e-6,
-        raise_on_mismatch: bool = False,
     ):
         """
         Convenience to set `AIN#_RANGE` for a channel with optional readback verification.
@@ -447,11 +447,7 @@ class LabJackT8(Device):
         - verify: if True, read back the register after `delay` and compare within `tol`
         - delay: seconds to wait before verification (settling)
         - tol: absolute tolerance for readback equality
-        - raise_on_mismatch: if True, raise on verification mismatch
 
-        Note: This function does not return a boolean. Errors will either be
-        logged (when `raise_on_mismatch` is False) or raised as RuntimeError
-        (when `raise_on_mismatch` is True).
         """
         if isinstance(channel, int):
             reg = f"AIN{channel}_RANGE"
@@ -466,21 +462,15 @@ class LabJackT8(Device):
 
         # perform the write; errors (and logging) are handled by `eWriteName`
         self.eWriteName(reg, float(value), raise_on_fail=False)
-        if verify:
-            time.sleep(max(0.0, float(delay)))
-            readback = self.eReadName(reg, raise_on_fail=False)
-            if readback is None:
-                if raise_on_mismatch:
-                    raise RuntimeError(f"Failed to read back {reg}")
-                return
 
-            diff = abs(readback - value)
-            if diff > float(tol):
-                msg = f"[WARNING] Range write mismatch {reg}: wrote {value}, read {readback} (diff={diff})"
-                print(msg)
-                if raise_on_mismatch:
-                    raise RuntimeError(msg)
-        # Success: no explicit True returned; errors are logged/raised above
+        print(f"[INFO] Set Range: {reg} = {value}")
+        if verify:
+            time.sleep(float(delay))
+            readback = self.eReadName(reg, raise_on_fail=False)
+            print(f"[INFO] Actual Range: {reg} = {readback}")
+            return readback
+
+        return None
 
 
 # ---------------------------------------------------------------------------
