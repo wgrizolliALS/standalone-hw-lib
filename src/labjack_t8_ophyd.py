@@ -531,7 +531,7 @@ def print_devices(devices):
         port_info = f", Port: {dev['port']}" if dev.get("port") else ""
         usb_info = f", USB Address: {dev['usb_address']}" if dev.get("usb_address") else ""
         print(
-            f"[{idx}] Device type: {dev['type']}, Connection: {conn_name}, Serial: {dev['serial']}, IP: {dev['ip']}{port_info}{usb_info}"
+            f"[{idx}] Device type: {dev['type']}, Connection: {conn_name}, Serial: {dev['serial number']}, IP: {dev['ip']}{port_info}{usb_info}"
         )
 
 
@@ -610,7 +610,7 @@ if __name__ == "__main__":
         print(f"[SELFTEST] First device: {first}")
         try:
             # Try opening by serial to read ranges/resolution
-            h = ljm.openS("ANY", "ANY", first.get("serial"))
+            h = ljm.openS("ANY", "ANY", first.get("serial number"))
             print("[SELFTEST] Reading channel ranges for AIN0-AIN3")
             ranges = get_channels_ranges(h, num_channels=[0, 1, 2, 3])
             print(f"[SELFTEST] Ranges: {ranges}")
