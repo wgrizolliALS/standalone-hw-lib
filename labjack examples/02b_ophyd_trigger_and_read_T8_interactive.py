@@ -2,17 +2,38 @@
 
 # %%
 import time
-
 import matplotlib
 
 # --- THE DETECTOR CLASS ---
-from ophyd_labjack_t8 import LabJackT8
+from labjack_t8_ophyd import LabJackT8
+
 
 # %%
 
 print("[INFO] Starting Detector Test with Ophyd...")
-det = LabJackT8(name="test_lj", channels=[0, 1], act_time=1.0, sample_rate=100, verbose=True)
+# det = LabJackT8(name="test_lj", channels=[0, 1], act_time=1.0, sample_rate=100, verbose=True)
+
+
+det = LabJackT8(
+    name="test_lj",
+    channels=[0, 1],
+    act_time=1.0,
+    sample_rate=100.0,  #
+    # ranges={0: 10, "AIN1": 3.44},
+    enable_waveforms=True,
+    verbose=True,
+)
+
 print("[INFO] ophyd LabJackT8 instance created with channels: ", det.active_channels)
+
+# %%
+
+det.set_range(0, 0.15)
+det.set_range(1, 0.095)
+
+
+# Ranges: ±11 V, ±9.6 V, ±4.8 V, ±2.4 V, ±1.2 V, ±0.6 V, ±0.3 V, ±0.15 V, ±0.075 V, ±0.036 V, ±0.018 V
+
 
 # %%
 print("[INFO] Triggering the detector...")
@@ -45,20 +66,20 @@ if det.handle:
 
 # %% POST PROCESSING
 print("\n[POSTPROCESSING] Post Processing STARTED")
-import matplotlib.pyplot as plt  # type: ignore
-import matplotlib
+import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib  # noqa: E402, F811
 
 matplotlib.use("qtagg")
 
-import numpy as np  # type: ignore
+# import numpy as np  # noqa: E402
 # %% PLOT RAW WAVEFORM
 
 _raw_wvf = readings["test_lj_raw_block"]["value"]  # type: ignore
 
 print("\n[POSTPROCESSING] Plotting raw waveform data with Matplotlib...")
 plt.figure()
-plt.plot(_raw_wvf[:, 0] - _raw_wvf[0, 0], _raw_wvf[:, 1] - np.mean(_raw_wvf[:, 1]))
-plt.plot(_raw_wvf[:, 0] - _raw_wvf[0, 0], _raw_wvf[:, 2] - np.mean(_raw_wvf[:, 2]))
+plt.plot(_raw_wvf[:, 0] - _raw_wvf[0, 0], _raw_wvf[:, 1], ".-")
+plt.plot(_raw_wvf[:, 0] - _raw_wvf[0, 0], _raw_wvf[:, 2], ".-")
 plt.show(block=True)
 
 # %%
