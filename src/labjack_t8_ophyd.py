@@ -502,7 +502,7 @@ def detect_labjacks(verbose: bool = False):
                 {
                     "type": res[1][i],
                     "connection": res[2][i],
-                    "serial": res[3][i],
+                    "serial number": res[3][i],
                     "ip": ljm.numberToIP(res[4][i]),
                 }
             )
