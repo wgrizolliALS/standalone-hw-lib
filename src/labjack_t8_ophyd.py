@@ -74,7 +74,7 @@ class LabJackT8(Device):
     def __init__(
         self,
         name,
-        channels: list[int] | int | None = None,
+        ai_channels: list[int] | list[str] | None = None,
         handle: str | None = None,
         act_time: float = 0.5,
         sample_rate: float = 20.0,
@@ -92,13 +92,50 @@ class LabJackT8(Device):
     ):
 
         super().__init__(name=name, **kwargs)
-        if isinstance(channels, (int, float)):
-            channels = [int(channels)]
+
+        def _channel_number(ch, prefix="AIN"):
+            _channels_n = [
+                int(c) if isinstance(c, (int, float)) else int(str(c).upper().replace(prefix, "")) for c in ch
+            ]
+            return _channels_n
+
+        def _channel_name(ch_n, prefix="AIN"):
+            _channels_name = [f"{prefix}{n}" for n in ch_n]
+            return _channels_name
 
         self.handle_info = None
         self._ljm_ready = False
-        self.active_channels = channels if channels is not None else [0]
-        self.channel_names = [f"AIN{c}" for c in self.active_channels]
+        # AI channel configuration (prepare for other channel types like DAC later)
+        # `ai_channels` accepts ints or string names like 'AIN0' on input
+        ai_channels = ai_channels if ai_channels is not None else [0]
+        # normalized integer indices for AI channels
+        self.ai_channels_n = []
+        for _ai_ch in ai_channels:
+            if isinstance(_ai_ch, (int, float)):
+                self.ai_channels_n.append(int(_ai_ch))
+            elif isinstance(_ai_ch, str):
+                if _ai_ch.upper().startswith("AIN"):
+                    self.ai_channels_n.append(int(_ai_ch.upper().replace("AIN", "")))
+                else:
+                    raise ValueError(f"Invalid AI channel: {_ai_ch}")
+            else:
+                raise ValueError(f"Invalid AI channel: {_ai_ch}")
+
+        self.ai_channels_name = _channel_name(self.ai_channels_n)
+
+        # # Normalize each provided channel into (name, index) and append to lists
+        # for ch in self.ai_channels:
+        #     name_str, idx = _channel_name_and_number(ch)
+        #     self.ai_channels_name.append(name_str)
+        #     self.ai_channels_n.append(int(idx))
+
+        # self.ai_channels_n = [
+        #     int(c) if isinstance(c, (int, float)) else int(str(c).upper().replace("AIN", "")) for c in self.ai_channels
+        # ]
+        # # canonical string names for AI channels (e.g., 'AIN0')
+        # self.ai_channels_name = [f"AIN{n}" for n in self.ai_channels_n]
+        # # Backwards-compat alias for older code that used `channel_names`
+        self.channel_names = list(self.ai_channels_name)
         self.save_raw_to_csv = save_raw_to_csv
         self._scan_results = []
         self._raw_block_for_csv = None  # Only for CSV saving, not exposed as a Signal
@@ -116,8 +153,23 @@ class LabJackT8(Device):
         self.verbose_stream = verbose_stream
 
         # Backwards-compatible ranges dict and generic writes dict
-        self.ranges = ranges or {}
-        self.actual_range = {}
+        self.ai_ranges = ranges or {}
+        self.ai_actual_range = {}
+
+        for key in list(self.ai_ranges.keys()):
+            if isinstance(key, int):
+                key_name = f"AIN{int(key)}"
+            elif isinstance(key, str):
+                if key.upper().startswith("AIN"):
+                    key_name = key.upper()
+                else:
+                    key_name = f"AIN{key}"
+            else:
+                raise ValueError(f"Invalid AI channel: {key}")
+
+            self.ai_ranges[key_name] = self.ai_ranges.pop(key)
+            self.ai_actual_range[key_name] = None
+
         self.writes = writes or {}
         self.writes_raise = bool(writes_raise)
 
@@ -125,7 +177,7 @@ class LabJackT8(Device):
         self.sample_rate = sample_rate
         self.last_scan_actual_rate = None
 
-        for ch in self.channel_names:
+        for ch in self.ai_channels_name:
             # Scalar signal (mean)
             full_name = f"{name}_{ch.lower()}"
             sig = Signal(name=full_name, kind="hinted")  # type: ignore
@@ -166,15 +218,18 @@ class LabJackT8(Device):
             # but respect `writes_raise` for raising on failure.
             # Apply configured ranges and writes. Let helper methods manage errors
             # (they accept flags to raise or log failures).
-            for k, v in (self.ranges or {}).items():
+            # Apply configured ranges: normalize keys and use canonical AI names
+            for k, v in (self.ai_ranges or {}).items():
+                # accept int keys or AIN names; convert to canonical 'AIN{n}' when passing to set_range
                 if isinstance(k, int):
-                    ch = k
+                    key_name = f"AIN{int(k)}"
                 else:
-                    ch = str(k)
-                actual_range = self.set_range(ch, float(v), verify=True)
-                self.actual_range[ch] = actual_range
+                    key_name = str(k)
+                actual_range = self.set_range(key_name, float(v), verify=True)
+                # store under canonical name
+                self.ai_actual_range[key_name] = actual_range
                 if self.verbose:
-                    print(f"[INFO] Set AIN range {ch} = {v}")
+                    print(f"[INFO] Set AIN range {key_name} = {v}")
 
             for name, val in (self.writes or {}).items():
                 self.eWriteName(str(name), float(val), raise_on_fail=self.writes_raise)
@@ -202,7 +257,7 @@ class LabJackT8(Device):
             if self.verbose_stream:
                 print(f"[INFO] {datetime.now()}: Acquisition STARTED.")
             try:
-                aAddresses = self.ljm_module.namesToAddresses(len(self.channel_names), self.channel_names)[0]
+                aAddresses = self.ljm_module.namesToAddresses(len(self.ai_channels_name), self.ai_channels_name)[0]
                 actual_rate = self.ljm_module.eStreamStart(
                     self.handle, scans_per_read, len(aAddresses), aAddresses, scan_rate
                 )
@@ -211,7 +266,7 @@ class LabJackT8(Device):
                 raw_data = ret[0]
                 self.ljm_module.eStreamStop(self.handle)
 
-                num_channels = len(self.channel_names)
+                num_channels = len(self.ai_channels_name)
                 reshaped = np.array(raw_data).reshape(-1, num_channels)
                 t0 = time.time() - self.act_time
                 for i, row in enumerate(reshaped):
@@ -219,7 +274,7 @@ class LabJackT8(Device):
                     samples.append([ts] + row.tolist())
 
                 # Scalar (mean) and waveform per channel
-                for i, ch in enumerate(self.channel_names):
+                for i, ch in enumerate(self.ai_channels_name):
                     avg = np.mean(reshaped[:, i])
                     self._ch_map[ch].put(avg)
                     # Store waveform as 1D array (fixed shape) if enabled
@@ -285,7 +340,7 @@ class LabJackT8(Device):
             key = f"{self.name}_raw_block"
             # Provide a minimal read dict with a `value` entry to match legacy
             # code that indexes `readings["..._raw_block"]["value"]`.
-            res[key] = {"value": self._raw_block_for_csv}
+            res[key] = {"value": self._raw_block_for_csv}  # type: ignore
         return res
 
     def describe(self):
@@ -299,7 +354,7 @@ class LabJackT8(Device):
             res.update(sig.describe())
         # Add per-channel waveform signal descriptions if enabled
         if self._record_waveform_signals:
-            for i, ch in enumerate(self.channel_names):
+            for i, ch in enumerate(self.ai_channels_name):
                 wf_key = f"{self.name}_{ch.lower()}_waveform"
                 res[wf_key] = {  # type: ignore
                     "source": f"LabJackT8 {ch} waveform",
@@ -336,7 +391,7 @@ class LabJackT8(Device):
                 self._csv_file = None
                 self._csv_writer = None
                 return
-            fieldnames = ["Time", "motor"] + self.channel_names
+            fieldnames = ["Time", "motor"] + self.ai_channels_name
             self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=fieldnames)
             self._csv_writer.writeheader()
 
@@ -348,7 +403,7 @@ class LabJackT8(Device):
                     "Time": datetime.fromtimestamp(sample[0]).strftime("%Y-%m-%d %H:%M:%S.%f"),
                     "motor": m_pos,
                 }
-                for i, ch_name in enumerate(self.channel_names):
+                for i, ch_name in enumerate(self.ai_channels_name):
                     row[ch_name] = sample[i + 1]
                 self._scan_results.append(row)
                 if self._csv_writer:
