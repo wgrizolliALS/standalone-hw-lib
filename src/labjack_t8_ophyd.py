@@ -59,12 +59,12 @@ class LabJackT8(Device):
     ----------
     name : str
         The name of the device for Ophyd/Bluesky.
-    ai_channels : list[int] | list[str] | int | str | None, optional
+    AI_channels : list[int] | list[str] | int | str | None, optional
         AIN channel indices or names to read (e.g., ``[0, 1]`` or
         ``['AIN0', 'AIN1']``). Defaults to ``[0]``.
     handle : int | None, optional
         An existing open LJM handle. If ``None``, a new connection is opened.
-    act_time : float, optional
+    acq_time : float, optional
         The duration of the stream acquisition in seconds. Default is 0.5s.
     sample_rate : float, optional
         The sampling frequency in Hz. Default is 20.0 Hz.
@@ -107,7 +107,7 @@ class LabJackT8(Device):
     --------
     - Set per-channel ranges (legacy style):
 
-        LabJackT8('t8', ai_channels=[0,1], ranges={0: 10, 'AIN1': 2.44})
+        LabJackT8('t8', AI_channels=[0,1], ranges={0: 10, 'AIN1': 2.44})
 
     - Generic register writes (recommended for arbitrary registers):
 
@@ -117,9 +117,9 @@ class LabJackT8(Device):
     def __init__(
         self,
         name,
-        ai_channels: list[int] | list[str] | None = None,
+        active_AI_channels: list[int] | list[str] | None = None,
         handle: int | None = None,
-        act_time: float = 0.5,
+        acq_time: float = 0.5,
         sample_rate: float = 20.0,
         connectionType: str = "ANY",
         identifier: str = "ANY",
@@ -136,20 +136,20 @@ class LabJackT8(Device):
 
         super().__init__(name=name, **kwargs)
 
-        # Accept scalar ai_channels (int/str) or iterable; normalize to list
-        if ai_channels is None:
-            ai_channels = [0]
-        elif not isinstance(ai_channels, (list, tuple)):
-            ai_channels = [ai_channels]
+        # Accept scalar AI_channels (int/str) or iterable; normalize to list
+        if active_AI_channels is None:
+            active_AI_channels = [0]
+        elif not isinstance(active_AI_channels, (list, tuple)):
+            active_AI_channels = [active_AI_channels]
 
         self.handle_info = None
         self._ljm_ready = False
         # AI channel configuration (prepare for other channel types like DAC later)
-        # `ai_channels` accepts ints or string names like 'AIN0' on input
+        # `AI_channels` accepts ints or string names like 'AIN0' on input
         # normalized integer indices for AI channels
-        self.ai_channels_n = _channel_number(ai_channels)
-        self.ai_channels_name = _channel_name(self.ai_channels_n)
-        self.channel_names = list(self.ai_channels_name)
+        self.AI_channels_n = _channel_number(active_AI_channels)
+        self.AI_channels_name = _channel_name(self.AI_channels_n)
+        self.channel_names = list(self.AI_channels_name)
 
         self.save_raw_to_csv = save_raw_to_csv
         self._scan_results = []
@@ -168,8 +168,8 @@ class LabJackT8(Device):
         self.verbose_stream = verbose_stream
 
         # Backwards-compatible ranges dict and generic writes dict
-        self.ai_ranges = {}
-        self.ai_actual_range = {}
+        self.AI_ranges = {}
+        self.AI_actual_range = {}
 
         if ranges is not None:
             # Normalize provided range keys to canonical 'AIN{n}' and ensure float values
@@ -188,25 +188,25 @@ class LabJackT8(Device):
 
                 key_name = f"AIN{ch_n}"
                 try:
-                    self.ai_ranges[key_name] = float(val) if val is not None else None
+                    self.AI_ranges[key_name] = float(val) if val is not None else None
                 except (TypeError, ValueError):
                     raise ValueError(f"Invalid range value for {key_name}: {val}")
-                self.ai_actual_range[key_name] = None
+                self.AI_actual_range[key_name] = None
 
-            # Ensure all configured channels appear in ai_ranges (fill missing with None)
+            # Ensure all configured channels appear in AI_ranges (fill missing with None)
             for _ch_name in self.channel_names:
-                if _ch_name not in self.ai_ranges:
-                    self.ai_ranges[_ch_name] = None
-                    self.ai_actual_range[_ch_name] = None
+                if _ch_name not in self.AI_ranges:
+                    self.AI_ranges[_ch_name] = None
+                    self.AI_actual_range[_ch_name] = None
 
         self.writes = writes or {}
         self.writes_raise = bool(writes_raise)
 
-        self.act_time = act_time
+        self.acq_time = acq_time
         self.sample_rate = sample_rate
         self.last_scan_actual_rate = None
 
-        for ch in self.ai_channels_name:
+        for ch in self.AI_channels_name:
             # Scalar signal (mean)
             full_name = f"{name}_{ch.lower()}"
             sig = Signal(name=full_name, kind="hinted")  # type: ignore
@@ -242,19 +242,19 @@ class LabJackT8(Device):
                     f"[INFO] Connected Device: {info[0]}, Connection: {info[1]}, Serial: {info[2]}, IP: {info[3]}, Port: {info[4]}\n"
                 )
             # Apply `ranges` and `writes` using the wrapper helpers so error handling
-            # and verification are centralized. `set_range` will perform optional
+            # and verification are centralized. `set_AI_range` will perform optional
             # readback verification; here we skip verification to keep init fast,
             # but respect `writes_raise` for raising on failure.
             # Apply configured ranges and writes. Let helper methods manage errors
             # (they accept flags to raise or log failures).
             # Apply configured ranges: normalize keys and use canonical AI names
-            for key_name, v in (self.ai_ranges or {}).items():
+            for key_name, v in (self.AI_ranges or {}).items():
                 if v is None:
                     continue
 
-                actual_range = self.set_range(key_name, float(v))
+                actual_range = self.set_AI_range(key_name, float(v))
                 # store under canonical name
-                self.ai_actual_range[key_name] = actual_range
+                self.AI_actual_range[key_name] = actual_range
                 if self.verbose:
                     print(f"[INFO] Set AIN range {key_name} = {v}")
 
@@ -284,15 +284,14 @@ class LabJackT8(Device):
         ophyd.status.DeviceStatus
             Status object that resolves when the acquisition thread completes.
         """
-        samples = []
         scan_rate = self.sample_rate
-        scans_per_read = int(scan_rate * self.act_time)
+        scans_per_read = int(scan_rate * self.acq_time)
 
         def _worker():
             if self.verbose_stream:
                 print(f"[INFO] {datetime.now()}: Acquisition STARTED.")
             try:
-                aAddresses = self.ljm_module.namesToAddresses(len(self.ai_channels_name), self.ai_channels_name)[0]
+                aAddresses = self.ljm_module.namesToAddresses(len(self.AI_channels_name), self.AI_channels_name)[0]
                 actual_rate = self.ljm_module.eStreamStart(
                     self.handle, scans_per_read, len(aAddresses), aAddresses, scan_rate
                 )
@@ -301,15 +300,18 @@ class LabJackT8(Device):
                 raw_data = ret[0]
                 self.ljm_module.eStreamStop(self.handle)
 
-                num_channels = len(self.ai_channels_name)
+                num_channels = len(self.AI_channels_name)
                 reshaped = np.array(raw_data).reshape(-1, num_channels)
-                t0 = time.time() - self.act_time
-                for i, row in enumerate(reshaped):
-                    ts = t0 + (i / actual_rate)
-                    samples.append([ts] + row.tolist())
+                t0 = time.time() - self.acq_time
+                n_samples = reshaped.shape[0]
+                # Preallocate buffer: first col = timestamp, remaining = channels
+                samples = np.empty((n_samples, num_channels + 1), dtype=float)
+                samples[:, 0] = t0 + (np.arange(n_samples) / actual_rate)
+                # Ensure numeric type for channel data
+                samples[:, 1:] = reshaped.astype(float)
 
                 # Scalar (mean) and waveform per channel
-                for i, ch in enumerate(self.ai_channels_name):
+                for i, ch in enumerate(self.AI_channels_name):
                     avg = np.mean(reshaped[:, i])
                     self._ch_map[ch].put(avg)
                     # Store waveform as 1D array (fixed shape) if enabled
@@ -321,12 +323,12 @@ class LabJackT8(Device):
                     time_vector = np.array([t0 + (j / actual_rate) for j in range(reshaped.shape[0])], dtype=float)
                     self._waveform_time_signal.put(time_vector)
 
-                try:
-                    arr = np.array(samples, dtype=float)
-                except Exception:
-                    print("[WARNING] Could not convert samples to float array, storing as object array instead.")
-                    arr = np.array(samples, dtype=object)
-                self._raw_block_for_csv = arr  # Store for CSV saver only
+                # Only build and store the raw sample block if needed for
+                # waveform Signals or CSV saving to avoid unnecessary work
+                # and memory use when those features are disabled.
+                if self._record_waveform_signals or self.save_raw_to_csv:
+                    # `samples` is already a numeric numpy array
+                    self._raw_block_for_csv = samples
 
                 if self.verbose_stream:
                     print(f"[INFO] {datetime.now()}: Acquisition FINISHED.")
@@ -403,12 +405,12 @@ class LabJackT8(Device):
             the Bluesky event model.
         """
         res = super().describe()
-        scans_per_read = int(self.sample_rate * self.act_time)
+        scans_per_read = int(self.sample_rate * self.acq_time)
         for sig in self._ch_map.values():
             res.update(sig.describe())
         # Add per-channel waveform signal descriptions if enabled
         if self._record_waveform_signals:
-            for i, ch in enumerate(self.ai_channels_name):
+            for i, ch in enumerate(self.AI_channels_name):
                 wf_key = f"{self.name}_{ch.lower()}_waveform"
                 res[wf_key] = {  # type: ignore
                     "source": f"LabJackT8 {ch} waveform",
@@ -459,7 +461,7 @@ class LabJackT8(Device):
                 self._csv_file = None
                 self._csv_writer = None
                 return
-            fieldnames = ["Time", "motor"] + self.ai_channels_name
+            fieldnames = ["Time", "motor"] + self.AI_channels_name
             self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=fieldnames)
             self._csv_writer.writeheader()
 
@@ -471,7 +473,7 @@ class LabJackT8(Device):
                     "Time": datetime.fromtimestamp(sample[0]).strftime("%Y-%m-%d %H:%M:%S.%f"),
                     "motor": m_pos,
                 }
-                for i, ch_name in enumerate(self.ai_channels_name):
+                for i, ch_name in enumerate(self.AI_channels_name):
                     row[ch_name] = sample[i + 1]
                 self._scan_results.append(row)
                 if self._csv_writer:
@@ -571,7 +573,7 @@ class LabJackT8(Device):
             print(msg)
             return None
 
-    def set_range(
+    def set_AI_range(
         self,
         channel,
         value: float,
@@ -582,7 +584,7 @@ class LabJackT8(Device):
 
         Writes the ``AIN#_RANGE`` register, waits for the specified settling
         delay, reads back the actual value, and stores it in
-        ``ai_actual_range``.
+        ``AI_actual_range``.
 
         Parameters
         ----------
@@ -626,7 +628,7 @@ class LabJackT8(Device):
         # perform the write (wrapper handles logging/errors)
         self.eWriteName(reg, float(value), raise_on_fail=False)
         # store configured value under canonical key
-        self.ai_ranges[key] = float(value)
+        self.AI_ranges[key] = float(value)
 
         if self.verbose:
             print(f"[INFO] Set Range: {reg} = {value:.6f}")
@@ -636,7 +638,7 @@ class LabJackT8(Device):
         if self.verbose:
             print(f"[INFO] Actual Range: {reg} = {readback:.6f}")
         # record actual/readback value under canonical key
-        self.ai_actual_range[key] = readback
+        self.AI_actual_range[key] = readback
         return readback
 
 
