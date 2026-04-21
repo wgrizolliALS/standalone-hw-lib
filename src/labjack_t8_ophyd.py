@@ -7,6 +7,16 @@ from ophyd import Device, Signal
 from labjack import ljm
 
 
+def _channel_number(ch, prefix="AIN"):
+    """Normalize an iterable of channel identifiers to integer indices."""
+    return [int(c) if isinstance(c, (int, float)) else int(str(c).upper().replace(prefix, "")) for c in ch]
+
+
+def _channel_name(ch_n, prefix="AIN"):
+    """Convert iterable of integer channel indices to canonical names like 'AIN0'."""
+    return [f"{prefix}{n}" for n in ch_n]
+
+
 class LabJackT8(Device):
     """
     A self-contained Ophyd device for the LabJack T8.
@@ -93,49 +103,21 @@ class LabJackT8(Device):
 
         super().__init__(name=name, **kwargs)
 
-        def _channel_number(ch, prefix="AIN"):
-            _channels_n = [
-                int(c) if isinstance(c, (int, float)) else int(str(c).upper().replace(prefix, "")) for c in ch
-            ]
-            return _channels_n
-
-        def _channel_name(ch_n, prefix="AIN"):
-            _channels_name = [f"{prefix}{n}" for n in ch_n]
-            return _channels_name
+        # Accept scalar ai_channels (int/str) or iterable; normalize to list
+        if ai_channels is None:
+            ai_channels = [0]
+        elif not isinstance(ai_channels, (list, tuple)):
+            ai_channels = [ai_channels]
 
         self.handle_info = None
         self._ljm_ready = False
         # AI channel configuration (prepare for other channel types like DAC later)
         # `ai_channels` accepts ints or string names like 'AIN0' on input
-        ai_channels = ai_channels if ai_channels is not None else [0]
         # normalized integer indices for AI channels
-        self.ai_channels_n = []
-        for _ai_ch in ai_channels:
-            if isinstance(_ai_ch, (int, float)):
-                self.ai_channels_n.append(int(_ai_ch))
-            elif isinstance(_ai_ch, str):
-                if _ai_ch.upper().startswith("AIN"):
-                    self.ai_channels_n.append(int(_ai_ch.upper().replace("AIN", "")))
-                else:
-                    raise ValueError(f"Invalid AI channel: {_ai_ch}")
-            else:
-                raise ValueError(f"Invalid AI channel: {_ai_ch}")
-
+        self.ai_channels_n = _channel_number(ai_channels)
         self.ai_channels_name = _channel_name(self.ai_channels_n)
-
-        # # Normalize each provided channel into (name, index) and append to lists
-        # for ch in self.ai_channels:
-        #     name_str, idx = _channel_name_and_number(ch)
-        #     self.ai_channels_name.append(name_str)
-        #     self.ai_channels_n.append(int(idx))
-
-        # self.ai_channels_n = [
-        #     int(c) if isinstance(c, (int, float)) else int(str(c).upper().replace("AIN", "")) for c in self.ai_channels
-        # ]
-        # # canonical string names for AI channels (e.g., 'AIN0')
-        # self.ai_channels_name = [f"AIN{n}" for n in self.ai_channels_n]
-        # # Backwards-compat alias for older code that used `channel_names`
         self.channel_names = list(self.ai_channels_name)
+
         self.save_raw_to_csv = save_raw_to_csv
         self._scan_results = []
         self._raw_block_for_csv = None  # Only for CSV saving, not exposed as a Signal
@@ -153,22 +135,36 @@ class LabJackT8(Device):
         self.verbose_stream = verbose_stream
 
         # Backwards-compatible ranges dict and generic writes dict
-        self.ai_ranges = ranges or {}
+        self.ai_ranges = {}
         self.ai_actual_range = {}
 
-        for key in list(self.ai_ranges.keys()):
-            if isinstance(key, int):
-                key_name = f"AIN{int(key)}"
-            elif isinstance(key, str):
-                if key.upper().startswith("AIN"):
-                    key_name = key.upper()
+        if ranges is not None:
+            # Normalize provided range keys to canonical 'AIN{n}' and ensure float values
+            for key, val in ranges.items():
+                # determine integer index using helper behaviour
+                if isinstance(key, (int, float)):
+                    ch_n = int(key)
+                elif isinstance(key, str):
+                    k = key.upper().replace("_RANGE", "")
+                    if k.startswith("AIN"):
+                        ch_n = int(k.replace("AIN", ""))
+                    else:
+                        ch_n = int(k)
                 else:
-                    key_name = f"AIN{key}"
-            else:
-                raise ValueError(f"Invalid AI channel: {key}")
+                    raise ValueError(f"Invalid AI channel: {key}")
 
-            self.ai_ranges[key_name] = self.ai_ranges.pop(key)
-            self.ai_actual_range[key_name] = None
+                key_name = f"AIN{ch_n}"
+                try:
+                    self.ai_ranges[key_name] = float(val) if val is not None else None
+                except (TypeError, ValueError):
+                    raise ValueError(f"Invalid range value for {key_name}: {val}")
+                self.ai_actual_range[key_name] = None
+
+            # Ensure all configured channels appear in ai_ranges (fill missing with None)
+            for _ch_name in self.channel_names:
+                if _ch_name not in self.ai_ranges:
+                    self.ai_ranges[_ch_name] = None
+                    self.ai_actual_range[_ch_name] = None
 
         self.writes = writes or {}
         self.writes_raise = bool(writes_raise)
@@ -219,13 +215,11 @@ class LabJackT8(Device):
             # Apply configured ranges and writes. Let helper methods manage errors
             # (they accept flags to raise or log failures).
             # Apply configured ranges: normalize keys and use canonical AI names
-            for k, v in (self.ai_ranges or {}).items():
-                # accept int keys or AIN names; convert to canonical 'AIN{n}' when passing to set_range
-                if isinstance(k, int):
-                    key_name = f"AIN{int(k)}"
-                else:
-                    key_name = str(k)
-                actual_range = self.set_range(key_name, float(v), verify=True)
+            for key_name, v in (self.ai_ranges or {}).items():
+                if v is None:
+                    continue
+
+                actual_range = self.set_range(key_name, float(v))
                 # store under canonical name
                 self.ai_actual_range[key_name] = actual_range
                 if self.verbose:
@@ -490,7 +484,6 @@ class LabJackT8(Device):
         self,
         channel,
         value: float,
-        verify: bool = True,
         delay: float = 0.05,
     ):
         """
@@ -504,28 +497,37 @@ class LabJackT8(Device):
         - tol: absolute tolerance for readback equality
 
         """
+        # Normalize channel to canonical AIN name (e.g., 'AIN0')
         if isinstance(channel, int):
-            reg = f"AIN{channel}_RANGE"
-        else:
-            ch = str(channel)
-            if ch.upper().endswith("_RANGE"):
-                reg = ch
-            elif ch.upper().startswith("AIN"):
-                reg = f"{ch}_RANGE"
+            ch_n = int(channel)
+        elif isinstance(channel, str):
+            # allow either 'AIN0' or '0'
+            ch_str = channel.upper().replace("_RANGE", "")
+            if ch_str.startswith("AIN"):
+                ch_n = int(ch_str.replace("AIN", ""))
             else:
-                reg = f"AIN{ch}_RANGE"
+                ch_n = int(ch_str)
+        else:
+            raise ValueError(f"Invalid channel type: {type(channel)}")
 
-        # perform the write; errors (and logging) are handled by `eWriteName`
+        key = f"AIN{ch_n}"
+        reg = f"{key}_RANGE"
+
+        # perform the write (wrapper handles logging/errors)
         self.eWriteName(reg, float(value), raise_on_fail=False)
+        # store configured value under canonical key
+        self.ai_ranges[key] = float(value)
 
-        print(f"[INFO] Set Range: {reg} = {value}")
-        if verify:
-            time.sleep(float(delay))
-            readback = self.eReadName(reg, raise_on_fail=False)
-            print(f"[INFO] Actual Range: {reg} = {readback}")
-            return readback
+        if self.verbose:
+            print(f"[INFO] Set Range: {reg} = {value:.6f}")
 
-        return None
+        time.sleep(float(delay))
+        readback = self.eReadName(reg, raise_on_fail=False)
+        if self.verbose:
+            print(f"[INFO] Actual Range: {reg} = {readback:.6f}")
+        # record actual/readback value under canonical key
+        self.ai_actual_range[key] = readback
+        return readback
 
 
 # ---------------------------------------------------------------------------
