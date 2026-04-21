@@ -8,12 +8,40 @@ from labjack import ljm
 
 
 def _channel_number(ch, prefix="AIN"):
-    """Normalize an iterable of channel identifiers to integer indices."""
+    """
+    Normalize channel identifiers to integer indices.
+
+    Parameters
+    ----------
+    ch : iterable
+        Channel identifiers as integers, floats, or strings (e.g., ``'AIN0'``).
+    prefix : str, optional
+        Prefix to strip from string identifiers. Default is ``'AIN'``.
+
+    Returns
+    -------
+    list of int
+        Integer channel indices.
+    """
     return [int(c) if isinstance(c, (int, float)) else int(str(c).upper().replace(prefix, "")) for c in ch]
 
 
 def _channel_name(ch_n, prefix="AIN"):
-    """Convert iterable of integer channel indices to canonical names like 'AIN0'."""
+    """
+    Convert integer channel indices to canonical register names.
+
+    Parameters
+    ----------
+    ch_n : iterable of int
+        Integer channel indices.
+    prefix : str, optional
+        Prefix for channel names. Default is ``'AIN'``.
+
+    Returns
+    -------
+    list of str
+        Channel names (e.g., ``['AIN0', 'AIN1']``).
+    """
     return [f"{prefix}{n}" for n in ch_n]
 
 
@@ -21,21 +49,21 @@ class LabJackT8(Device):
     """
     A self-contained Ophyd device for the LabJack T8.
 
-    Features:
-    1. Hardware Connection (LJM)
-    2. Asynchronous Triggering (Threading)
-    3. Data Processing (Averaging for Bluesky)
-    4. Data Logging (Self-contained CSV saving for Raw Data, optional)
-    5. Optional per-channel waveform signal recording
+    Notes
+    -----
+    Provides hardware connection via LJM, asynchronous triggering (threading),
+    per-channel mean computation for Bluesky, optional raw CSV logging, and
+    optional per-channel waveform signal recording.
 
     Parameters
     ----------
     name : str
         The name of the device for Ophyd/Bluesky.
-    channels : list[int] | int | None, optional
-        List of AIN channel indices to read (e.g., [0, 1] for AIN0 and AIN1).
-    handle : str | None, optional
-        An existing LJM handle. If None, a new connection is opened.
+    ai_channels : list[int] | list[str] | int | str | None, optional
+        AIN channel indices or names to read (e.g., ``[0, 1]`` or
+        ``['AIN0', 'AIN1']``). Defaults to ``[0]``.
+    handle : int | None, optional
+        An existing open LJM handle. If ``None``, a new connection is opened.
     act_time : float, optional
         The duration of the stream acquisition in seconds. Default is 0.5s.
     sample_rate : float, optional
@@ -45,36 +73,41 @@ class LabJackT8(Device):
     identifier : str, optional
         LJM identifier (e.g., "ANY", or a specific serial number).
     save_raw_to_csv : bool, optional
-        If True, saves raw waveform data to CSV during scans. Default is True.
-    enable_waveforms : bool, optional
-        If True, exposes per-channel waveform signals and time vector. Default is False.
+        If ``True``, saves raw waveform data to CSV during scans. Default is ``True``.
     csv_fname : str | None, optional
-        Optional filename for the raw data CSV export.
+        Filename for the raw data CSV export. If ``None``, a timestamped name
+        is generated automatically each time a scan starts. Any value provided
+        here is used as-is; it is not regenerated between scans unless reset
+        to ``None``.
     verbose : bool, optional
-        Print connection and status info.
+        If ``True``, print connection and status messages. Default is ``False``.
     verbose_stream : bool, optional
-        Print acquisition info.
+        If ``True``, print per-acquisition start/stop messages. Default is ``False``.
+    enable_waveforms : bool, optional
+        If ``True``, exposes per-channel waveform signals and a shared time
+        vector. Default is ``False``.
     ranges : dict | None, optional
         Backwards-compatible per-channel range settings. Keys may be channel
         integers (e.g. `0`) or channel name strings (e.g. `'AIN0'` or
         `'AIN0_RANGE'`). Values are numeric and will be written to the
         corresponding `AIN#_RANGE` register on device initialization.
         Values for T8 model are: ±11 V, ±9.6 V, ±4.8 V, ±2.4 V, ±1.2 V,
-        ±0.6 V, ±0.3 V, ±0.15 V, ±0.075 V, ±0.036 V, ±0.018 V . See T8 documentaion
+        ±0.6 V, ±0.3 V, ±0.15 V, ±0.075 V, ±0.036 V, ±0.018 V. See T8 documentation
         at https://support.labjack.com/docs/14-3-2-analog-inputs-t8-t-series-datasheet
     writes : dict | None, optional
         Generic register writes to apply at initialization. Keys are the
         LJM register names (strings) and values are numeric. Useful for
         setting arbitrary device registers (including `AIN#_RANGE`).
     writes_raise : bool, optional
-        If True, any failure performing the `writes`/`ranges` will raise a
-        RuntimeError and abort initialization. If False (default), write
-        failures are logged as warnings and initialization continues.
+        If True, any failure performing the ``writes`` register writes will
+        raise a ``RuntimeError`` and abort initialization. If False (default),
+        failures are logged as warnings and initialization continues. Failures
+        in ``ranges`` writes are always logged, never raised.
     Examples
     --------
     - Set per-channel ranges (legacy style):
 
-        LabJackT8('t8', channels=[0,1], ranges={0: 10, 'AIN1': 2.44})
+        LabJackT8('t8', ai_channels=[0,1], ranges={0: 10, 'AIN1': 2.44})
 
     - Generic register writes (recommended for arbitrary registers):
 
@@ -85,7 +118,7 @@ class LabJackT8(Device):
         self,
         name,
         ai_channels: list[int] | list[str] | None = None,
-        handle: str | None = None,
+        handle: int | None = None,
         act_time: float = 0.5,
         sample_rate: float = 20.0,
         connectionType: str = "ANY",
@@ -239,9 +272,17 @@ class LabJackT8(Device):
 
     def trigger(self):
         """
-        Start an asynchronous acquisition from the LabJack T8.
-        Acquires a block of data, computes per-channel means, and (optionally) stores waveforms and time vector.
-        The raw block is stored for CSV export if enabled.
+        Start an asynchronous stream acquisition from the LabJack T8.
+
+        Acquires a block of samples, computes per-channel means, and stores
+        waveforms and a shared time vector if ``enable_waveforms`` was set at
+        construction. The raw block is held in ``_raw_block_for_csv`` for
+        optional CSV export.
+
+        Returns
+        -------
+        ophyd.status.DeviceStatus
+            Status object that resolves when the acquisition thread completes.
         """
         samples = []
         scan_rate = self.sample_rate
@@ -315,8 +356,18 @@ class LabJackT8(Device):
 
     def read(self):
         """
-        Read the current values from all signals.
-        Returns a dictionary with per-channel means and, if enabled, waveform and time signals.
+        Return the current signal values from all configured channels.
+
+        Includes per-channel mean values and, if ``enable_waveforms`` is
+        ``True``, per-channel waveform arrays and the shared time vector.
+        Also exposes the last raw acquisition block under the key
+        ``<name>_raw_block`` for backward compatibility.
+
+        Returns
+        -------
+        dict
+            Mapping of signal name to ``{'value': ..., 'timestamp': ...}``
+            entries as returned by each :class:`~ophyd.Signal`.
         """
         res = super().read()
         for sig in self._ch_map.values():
@@ -339,8 +390,17 @@ class LabJackT8(Device):
 
     def describe(self):
         """
-        Describe the structure of the signals produced by this device.
-        Includes per-channel means and, if enabled, waveform and time signals.
+        Return metadata describing the signals produced by this device.
+
+        Includes per-channel mean signal descriptors and, if
+        ``enable_waveforms`` is ``True``, per-channel waveform and time vector
+        descriptors with shape information.
+
+        Returns
+        -------
+        dict
+            Mapping of signal name to descriptor dicts compatible with
+            the Bluesky event model.
         """
         res = super().describe()
         scans_per_read = int(self.sample_rate * self.act_time)
@@ -366,18 +426,32 @@ class LabJackT8(Device):
 
     def csv_saver(self, name, doc):
         """
-        Bluesky callback to save raw waveform data to CSV during a scan.
-        Only saves if save_raw_to_csv is True.
-        If save_raw_to_csv is False, this callback is a no-op and nothing will be saved (safe to subscribe regardless of flag).
-        Uses the temporary _raw_block_for_csv attribute for performance, not stored in event stream.
-        Columns: Time, motor, [channels...]
+        Bluesky document callback for saving raw waveform data to CSV.
+
+        Handles ``'start'``, ``'event'``, and ``'stop'`` documents. On
+        ``'start'``, opens a CSV file using ``self.csv_fname`` if set, or
+        generates a timestamped filename otherwise. Appends rows on each
+        ``'event'`` and closes the file on ``'stop'``. Has no effect when
+        ``save_raw_to_csv`` is ``False``, so it is safe to subscribe
+        unconditionally.
+
+        Output columns: ``Time``, ``motor``, then one column per configured
+        AIN channel.
+
+        Parameters
+        ----------
+        name : str
+            Bluesky document type (``'start'``, ``'event'``, or ``'stop'``).
+        doc : dict
+            The Bluesky document payload.
         """
         if not self.save_raw_to_csv:
             return
 
         if name == "start":
             self._scan_results.clear()
-            self.csv_fname = f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            if self.csv_fname is None:
+                self.csv_fname = f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             try:
                 self._csv_file = open(self.csv_fname, "w", newline="", encoding="utf-8")
             except Exception as e:
@@ -423,7 +497,9 @@ class LabJackT8(Device):
 
     def close(self):
         """
-        Close the connection to the LabJack device.
+        Close the LJM connection to the LabJack device.
+
+        Safe to call even if the device was never successfully connected.
         """
         if hasattr(self, "handle") and self.handle:
             self.ljm_module.close(self.handle)
@@ -431,26 +507,25 @@ class LabJackT8(Device):
 
     def eWriteName(self, name, value, raise_on_fail: bool = False):
         """
-        Safe wrapper around the LabJack LJM `eWriteName` call.
+        Write a value to a named LabJack register via LJM.
 
         Parameters
-        - name: str - register name to write (e.g., 'AIN0_RANGE' or 'DIO0_EF_CLOCK0_ENABLE')
-        - value: numeric - value to write to the register
-        - raise_on_fail: bool - if True, exceptions from the underlying LJM call
-            will be propagated. If False, exceptions are caught and logged.
-
-        Note: This function does not return a value. Success is indicated by the
-        absence of an exception when `raise_on_fail` is True, or by no error
-        message being printed when `raise_on_fail` is False.
+        ----------
+        name : str
+            LJM register name (e.g., ``'AIN0_RANGE'`` or
+            ``'DIO0_EF_CLOCK0_ENABLE'``).
+        value : float
+            Value to write to the register.
+        raise_on_fail : bool, optional
+            If ``True``, propagate exceptions from the underlying LJM call.
+            If ``False`` (default), catch and log errors without raising.
         """
-        # If caller wants exceptions propagated, let them bubble up.
         if raise_on_fail:
-            # Will raise if the underlying call fails.
             self.ljm_module.eWriteName(self.handle, str(name), float(value))
             if self.verbose:
                 print(f"[INFO] eWriteName: Wrote {name} = {value}")
+            return
 
-        # Otherwise, catch errors and return False on failure.
         try:
             self.ljm_module.eWriteName(self.handle, str(name), float(value))
             if self.verbose:
@@ -460,10 +535,26 @@ class LabJackT8(Device):
 
     def eReadName(self, name, raise_on_fail: bool = False) -> float | None:
         """
-        Wrapper around LJM `eReadName` to read a single register.
+        Read a single named LabJack register via LJM.
 
-        Returns the numeric value on success, or None on failure (unless
-        `raise_on_fail` is True, in which case a RuntimeError is raised).
+        Parameters
+        ----------
+        name : str
+            LJM register name to read (e.g., ``'AIN0_RANGE'``).
+        raise_on_fail : bool, optional
+            If ``True``, raise a :exc:`RuntimeError` on failure.
+            If ``False`` (default), print the error and return ``None``.
+
+        Returns
+        -------
+        float or None
+            Register value on success, or ``None`` if the read fails and
+            ``raise_on_fail`` is ``False``.
+
+        Raises
+        ------
+        RuntimeError
+            If the LJM read fails and ``raise_on_fail`` is ``True``.
         """
         try:
             val = self.ljm_module.eReadName(self.handle, str(name))
@@ -487,15 +578,34 @@ class LabJackT8(Device):
         delay: float = 0.05,
     ):
         """
-        Convenience to set `AIN#_RANGE` for a channel with optional readback verification.
+        Set the voltage range for a single AIN channel.
+
+        Writes the ``AIN#_RANGE`` register, waits for the specified settling
+        delay, reads back the actual value, and stores it in
+        ``ai_actual_range``.
 
         Parameters
-        - channel: int or str (e.g., 0 or 'AIN0')
-        - value: float - value to write
-        - verify: if True, read back the register after `delay` and compare within `tol`
-        - delay: seconds to wait before verification (settling)
-        - tol: absolute tolerance for readback equality
+        ----------
+        channel : int or str
+            Channel to configure. Accepts an integer index (``0``), a
+            canonical name (``'AIN0'``), or a register name
+            (``'AIN0_RANGE'``).
+        value : float
+            Desired range value in volts (e.g., ``10.0`` for ±10 V).
+        delay : float, optional
+            Seconds to wait before reading back the register for settling.
+            Default is ``0.05``.
 
+        Returns
+        -------
+        float or None
+            The readback value from the device after the write, or ``None``
+            if the readback fails.
+
+        Raises
+        ------
+        ValueError
+            If *channel* cannot be parsed to a valid channel index.
         """
         # Normalize channel to canonical AIN name (e.g., 'AIN0')
         if isinstance(channel, int):
@@ -537,8 +647,19 @@ class LabJackT8(Device):
 
 def detect_labjacks(verbose: bool = False):
     """
-    Scan for connected LabJack devices (wraps ljm.listAllS).
-    Returns a list of device info dicts.
+    Scan for connected LabJack devices using LJM.
+
+    Parameters
+    ----------
+    verbose : bool, optional
+        If ``True``, print a formatted device list via
+        :func:`print_devices`. Default is ``False``.
+
+    Returns
+    -------
+    list of dict
+        One dict per discovered device with keys ``'type'``,
+        ``'connection'``, ``'serial number'``, and ``'ip'``.
     """
     devices = []
     try:
@@ -564,7 +685,12 @@ def detect_labjacks(verbose: bool = False):
 
 def print_devices(devices):
     """
-    Prints a formatted list of detected LabJack devices.
+    Print a formatted table of detected LabJack devices.
+
+    Parameters
+    ----------
+    devices : list of dict
+        Device info dicts as returned by :func:`detect_labjacks`.
     """
 
     if not devices:
@@ -583,7 +709,14 @@ def print_devices(devices):
 
 
 def close_all_labjacks(verbose: bool = False):
-    """Close all open LabJack connections."""
+    """
+    Close all open LabJack LJM connections.
+
+    Parameters
+    ----------
+    verbose : bool, optional
+        If ``True``, print a confirmation message. Default is ``False``.
+    """
     try:
         ljm.closeAll()
         if verbose:
@@ -593,7 +726,23 @@ def close_all_labjacks(verbose: bool = False):
 
 
 def set_DAC_voltage(handle, channel, voltage):
-    """Set DAC channel voltage and return actual reading."""
+    """
+    Set a DAC channel to the specified voltage and return the readback.
+
+    Parameters
+    ----------
+    handle : int
+        Open LJM device handle.
+    channel : int
+        DAC channel index (e.g., ``0`` for DAC0).
+    voltage : float
+        Desired output voltage.
+
+    Returns
+    -------
+    float or None
+        Actual voltage read back from the device, or ``None`` on error.
+    """
     try:
         ljm.eWriteName(handle, f"DAC{channel}", float(voltage))
         actual = ljm.eReadName(handle, f"DAC{channel}")
@@ -604,9 +753,22 @@ def set_DAC_voltage(handle, channel, voltage):
 
 
 def set_channels_ranges(handle, num_channels=None, ranges=None, check_ranges=False):
-    """Set AIN channel ranges in batch.
+    """
+    Set AIN voltage ranges for multiple channels in batch.
 
-    - `num_channels` can be iterable of ints; `ranges` can be dict or list.
+    Parameters
+    ----------
+    handle : int
+        Open LJM device handle.
+    num_channels : iterable of int, optional
+        Channel indices to configure. Defaults to ``range(8)``.
+    ranges : dict or list, optional
+        Desired range per channel. If a ``dict``, keys are channel indices
+        mapping to range values. If a ``list``, values are applied in the
+        order of *num_channels*. Defaults to ``10`` V for all channels.
+    check_ranges : bool, optional
+        If ``True``, read back each range after writing via
+        :func:`get_channels_ranges`. Default is ``False``.
     """
     if num_channels is None:
         num_channels = range(8)
@@ -623,7 +785,22 @@ def set_channels_ranges(handle, num_channels=None, ranges=None, check_ranges=Fal
 
 
 def get_channels_ranges(handle, num_channels=None):
-    """Read AIN channel ranges and return dict mapping index->range."""
+    """
+    Read AIN voltage ranges from the device for multiple channels.
+
+    Parameters
+    ----------
+    handle : int
+        Open LJM device handle.
+    num_channels : iterable of int, optional
+        Channel indices to read. Defaults to ``range(8)``.
+
+    Returns
+    -------
+    dict
+        Mapping of channel index to range value (float), or ``None`` for
+        channels that could not be read.
+    """
     if num_channels is None:
         num_channels = range(8)
     out = {}
@@ -637,7 +814,20 @@ def get_channels_ranges(handle, num_channels=None):
 
 
 def get_channel_resolution(handle):
-    """Return the global AIN_ALL_RESOLUTION_INDEX value (T8-specific)."""
+    """
+    Read the global AIN resolution index from the device (T8-specific).
+
+    Parameters
+    ----------
+    handle : int
+        Open LJM device handle.
+
+    Returns
+    -------
+    int or None
+        The ``AIN_ALL_RESOLUTION_INDEX`` register value, or ``None`` on
+        error.
+    """
     try:
         val = ljm.eReadName(handle, "AIN_ALL_RESOLUTION_INDEX")
         return int(val)
