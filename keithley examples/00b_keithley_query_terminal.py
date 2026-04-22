@@ -47,6 +47,21 @@ _numbered_commands = [
     (":STAT:QUES:COND?", "Query questionable status register"),
     (":STAT:OPER:COND?", "Query operation status register"),
     (":CURR:NPLC?", "Query NPLC setting"),
+    # Measurement Speed & Filtering
+    (":SENS:CURR:NPLC 1", "Set integration time to 1 PLC (fast)"),
+    (":SENS:CURR:NPLC 10", "Set integration time to 10 PLC (normal)"),
+    (":AVER:COUN 10", "Set averaging count to 10"),
+    (":AVER:STAT ON", "Enable averaging"),
+    (":AVER:STAT OFF", "Disable averaging"),
+    # Input & Display Control
+    (":INP:STAT ON", "Turn input ON"),
+    (":INP:STAT OFF", "Turn input OFF"),
+    (":INP:STAT?", "Query input status (ON/OFF)"),
+    # Triggering & Buffer
+    (":TRIG:SOUR IMM", "Set trigger to immediate/free-run"),
+    (":TRIG:SOUR MAN", "Set trigger to manual"),
+    (":TRAC:CLE", "Clear trace buffer"),
+    (":TRAC:POIN?", "Query number of readings in buffer"),
     ("*RST", "Reset the instrument"),
 ]
 
