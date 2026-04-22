@@ -1,10 +1,9 @@
 # %%
 
 import time
+from datetime import datetime
 
 import keithley_utils as kthu
-
-from datetime import datetime
 
 
 _help_text = "=" * 32 + " [HELP] " + "=" * 32 + "\n"
@@ -74,6 +73,37 @@ def _colorStr(s, color=None, bold=False):
     return f"\033[{bold_code}{color_code}m{s}\033[0m"
 
 
+def parse_input(s: str):
+    """Parse input string and return command to execute or None.
+
+    Returns:
+        str or None: SCPI command string to execute, "EXIT" for exit, or None for no action
+    """
+    if not s:
+        return None
+
+    lower_s = s.lower()
+    if lower_s in ("exit", "quit"):
+        return "EXIT"
+    elif lower_s in ("?", "help"):
+        print(_help_text)
+        return None
+    elif lower_s in ("#", "#?"):
+        print(_help_quick_cmd)
+        return None
+    elif lower_s.startswith("#"):
+        try:
+            i = int(s[1:])
+            cmd = _numbered_commands[i][0]
+            print(_colorStr(f"[INFO] Quick-Command Selected: #{i} -> {cmd}", color="green", bold=True))
+            return cmd
+        except (ValueError, IndexError):
+            print(_colorStr("[ERROR] invalid quick-command index", color="red", bold=True))
+            return None
+    else:
+        return s
+
+
 def choose_device(devs):
     if len(devs) == 1:
         return devs[0]
@@ -91,36 +121,23 @@ def choose_device(devs):
         print(f"[ERROR] Enter an integer 0..{len(devs) - 1}.")
 
 
-def handle_input(s: str) -> bool:
+def handle_input(s: str, serial_port: str) -> bool:
     """Parse and handle a single input string.
 
     Returns True to continue the REPL, False to exit.
     """
-    if not s:
+    command = parse_input(s)
+
+    if command is None:
         return True
-    lower_s = s.lower()
-    if lower_s in ("exit", "quit"):
+    elif command == "EXIT":
         return False
-    elif lower_s in ("?", "help"):
-        print(_help_text)
-        return True
-    elif lower_s in ("#", "#?"):
-        print(_help_quick_cmd)
-        return True
-    elif lower_s.startswith("#"):
-        try:
-            i = int(s[1:])
-            cmd = _numbered_commands[i][0]
-            print(_colorStr(f"[INFO] Quick-Command Selected: #{i} -> {cmd}", color="green", bold=True))
-            kthu.serial_query(cmd, SERIAL_PORT, verbose=True)
-        except Exception:
-            print(_colorStr("[ERROR] invalid quick-command index", color="red", bold=True))
     else:
-        kthu.serial_query(s, SERIAL_PORT, verbose=True)
+        kthu.serial_query(command, serial_port, verbose=True)
 
     while True:
         time.sleep(0.1)  # small delay to ensure command is processed before next query
-        _res = kthu.serial_query(":SYST:ERR?", SERIAL_PORT, verbose=True)
+        _res = kthu.serial_query(":SYST:ERR?", serial_port, verbose=True)
         if _res is not None and "0," in _res[0:2]:
             break
         else:
@@ -137,35 +154,40 @@ def _datenowstr():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# %%
-if __name__ == "__main__":
+def main():
+    """Main application entry point."""
     print("\n[INFO] ### Scan for Keithleys ###")
     try:
         devs = kthu.detect_keithley_devices(baudrate=None, verbose=True)
-        print("[INFO] ### Scan ENDED ###\n")
     except Exception as e:
         print(f"[ERROR] Error during Keithley detection: {e}")
+        return
+
+    print("[INFO] ### Scan ENDED ###\n")
 
     if not devs:
         print("[ERROR] No Keithley devices found. Exiting.")
-        raise SystemExit(1)
+        return
 
     dev = choose_device(devs)
-    SERIAL_PORT = dev["port"]
+    serial_port = dev["port"]
 
     print("[INFO] Selected device:")
     kthu.print_keithley_properties(dev)
-
     print("\n[INFO] Enter SCPI commands (type 'help' or '?' for help, 'exit' to quit)")
+
     try:
         while True:
             s = input(_colorStr("\n[INPUT] Enter Command:\n", color="cyan", bold=True)).strip()
-            if not handle_input(s):
+            if not handle_input(s, serial_port):
                 break
     except KeyboardInterrupt:
-        kthu.serial_query(":SYST:ERR?", SERIAL_PORT, verbose=True)  #
-        kthu.serial_query(":ABORT", SERIAL_PORT, verbose=True)  #
-        kthu.serial_query(":SYST:ERR?", SERIAL_PORT, verbose=True)  #
-        print("\n[INFO] Exiting.")
+        print("\n[INFO] Cleaning up and exiting...")
+        kthu.serial_query(":ABORT", serial_port, verbose=True)
+
+
+# %%
+if __name__ == "__main__":
+    main()
 
 # %%
