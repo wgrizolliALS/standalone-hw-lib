@@ -7,6 +7,17 @@ DEBUG = False
 
 
 def _colorStr(s, color=None, bold=False):
+    """Return the string wrapped in ANSI color/bold escape codes.
+
+    Args:
+        s: The input string to colorize.
+        color: Optional color name (red, green, blue, purple, cyan).
+        bold: If True, make the text bold.
+
+    Returns:
+        The ANSI-escaped string for terminal display.
+    """
+
     color_codes = {
         "red": "91",
         "green": "92",
@@ -21,6 +32,16 @@ def _colorStr(s, color=None, bold=False):
 
 
 def print_verbose(msg, verbose=True, timestamp=False, color=None, bold=False):
+    """Print `msg` to stdout when `verbose` is True, with optional color and timestamp.
+
+    Args:
+        msg: Message to print.
+        verbose: If False, suppress printing.
+        timestamp: If True, prepend a timestamp to the message.
+        color: Optional color name for terminal output.
+        bold: If True, print in bold.
+    """
+
     if verbose:
         if timestamp:
             msg = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] : {msg}"
@@ -38,7 +59,24 @@ def serial_query(
     debug: bool = DEBUG,
     wait_before_read: float = 0.1,
 ) -> str | None:
-    """Sends a string to serial port and returns the response."""
+    """Send a command string to a serial device and read a single-line response.
+
+    This opens the serial port, writes `cmd`, optionally waits for data to become
+    available, then reads one line and returns it (or `None` on empty response
+    or error). Exceptions are caught and logged via `print_verbose`.
+
+    Args:
+        cmd: Command string to send (a newline is appended).
+        port: Serial device path (e.g. COM3 or /dev/ttyUSB0).
+        baudrate: Serial baud rate.
+        wait_serial: If True, poll until data is available or a timeout occurs.
+        verbose: Enable informational printing.
+        debug: Enable debug printing.
+        wait_before_read: Sleep interval between polls when `wait_serial` is True.
+
+    Returns:
+        The decoded response string, or `None` on empty response or error.
+    """
     print_verbose(f"[DEBUG] : Attempting to open serial port {port} at baudrate {baudrate}", debug)
 
     try:
@@ -110,9 +148,24 @@ def serial_batched(
     wait_between_cmds: float = 0.1,
     check_errors: bool = True,
 ) -> str | None:
-    """Send consecutive write-only commands batched with ';' where safe.
+    """Send a list of serial commands either batched or individually.
 
-    Commands that are queries or contain read-like tokens are sent individually.
+    If any command contains a question mark `?` (a query) or `send_ind` is
+    True, commands are sent one-by-one with a small delay between them. When
+    safe, the list can be joined with `;` and sent as a single batched write
+    which may be faster for write-only sequences.
+
+    Args:
+        cmds: List of command strings to send.
+        port: Serial device path.
+        verbose: Enable informational printing.
+        debug: Enable debug printing.
+        send_ind: Force sending commands individually.
+        wait_between_cmds: Seconds to sleep between commands.
+        check_errors: If True, query the instrument error queue after sends.
+
+    Returns:
+        The last received response (or `None`).
     """
 
     if any("?" in _str for _str in cmds) or send_ind:
@@ -140,9 +193,22 @@ def query_and_check(
     wait_between_cmds: float = 0.1,
     check_errors: bool = True,
 ) -> str | None:
-    """Send consecutive write-only commands batched with ';' where safe.
+    """Send a single query command then optionally check the instrument error queue.
 
-    Commands that are queries or contain read-like tokens are sent individually.
+    This is a thin wrapper around `serial_query` that performs an optional
+    error-checking step (`:SYST:ERR?`) after the query to surface instrument
+    errors to the user.
+
+    Args:
+        cmd: Query string to send.
+        port: Serial device path.
+        verbose: Enable informational printing.
+        debug: Enable debug printing.
+        wait_between_cmds: Seconds to sleep before/after error checking.
+        check_errors: If True, call `check_inst_errors` after the query.
+
+    Returns:
+        The response string from the device, or `None` on error.
     """
 
     _res = serial_query(cmd, port, verbose=verbose, debug=debug)
@@ -154,7 +220,12 @@ def query_and_check(
 
 
 def close_serial_connection(port, verbose=True):
-    """Closes the serial connection to the instrument."""
+    """Attempt to close a serial connection on `port` if open.
+
+    Args:
+        port: Serial device path.
+        verbose: Enable informational printing about the close operation.
+    """
     try:
         ser = serial.Serial(port)
         if ser.is_open:
@@ -172,7 +243,15 @@ def close_serial_connection(port, verbose=True):
 
 
 def check_inst_errors(port, verbose=True, debug=DEBUG):
-    """Query instrument error queue and print any errors."""
+    """Poll the instrument error queue and print any non-zero errors.
+
+    Repeatedly queries `:SYST:ERR?` until the instrument reports `0,` (no error).
+
+    Args:
+        port: Serial device path.
+        verbose: Enable informational printing.
+        debug: Enable debug printing.
+    """
     while True:
         err = serial_query(":SYST:ERR?", port, verbose=verbose, debug=debug)
         if err is None or err.startswith("0,"):
@@ -181,13 +260,21 @@ def check_inst_errors(port, verbose=True, debug=DEBUG):
 
 
 def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=False, debug=DEBUG) -> list[dict] | None:
-    """
-    Scans all available serial ports and attempts to identify Keithley 6514 instruments.
+    """Scan available serial ports to identify Keithley instruments.
 
-    If baudrate is None, tries a list of common baudrates for each port.
+    For each detected port the function attempts to send `*IDN?` at the
+    requested `baudrate`, or over a set of common baud rates if `baudrate` is
+    None. Results are returned as a list of dictionaries describing each port
+    and whether a valid IDN response was received.
+
+    Args:
+        baudrate: If provided, try only this baudrate; otherwise test common rates.
+        timeout: Serial timeout used for low-level operations (seconds).
+        verbose: Enable informational printing.
+        debug: Enable debug printing.
 
     Returns:
-        list: A list of dictionaries containing port info, IDN strings, and baudrate used.
+        A list of device dictionaries when ports were found, otherwise `None`.
     """
     found_devices = []
     ports = serial.tools.list_ports.comports()
