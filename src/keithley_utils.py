@@ -153,6 +153,24 @@ def query_and_check(
     return _res
 
 
+def close_serial_connection(port, verbose=True):
+    """Closes the serial connection to the instrument."""
+    try:
+        ser = serial.Serial(port)
+        if ser.is_open:
+            ser.close()
+            print_verbose(f"[INFO] Serial connection on {port} closed.", verbose=verbose, color="blue", bold=True)
+        else:
+            print_verbose(f"[INFO] Serial connection on {port} was already closed.", verbose=verbose, color="yellow")
+    except Exception as e:
+        print_verbose(
+            f"[ERROR] Failed to close serial connection on {port}: {e}",
+            verbose=verbose,
+            color="red",
+            bold=True,
+        )
+
+
 def check_inst_errors(port, verbose=True, debug=DEBUG):
     """Query instrument error queue and print any errors."""
     while True:
@@ -653,7 +671,7 @@ def acq_waveform(port, poll_interval=0.5, verbose=True, debug=DEBUG):
     """
 
     print_verbose(
-        "[INFO] Acquiring waveform...",
+        "\n[INFO] Acquiring waveform...",
         verbose=verbose,
         timestamp=True,
         color="purple",
@@ -685,7 +703,7 @@ def acq_waveform(port, poll_interval=0.5, verbose=True, debug=DEBUG):
     )
 
     print_verbose(
-        "[INFO] Download data from instrument...",
+        "\n[INFO] Download data from instrument...",
         color="purple",
         verbose=verbose,
     )
