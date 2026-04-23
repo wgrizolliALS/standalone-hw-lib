@@ -35,7 +35,7 @@ def serial_query(
     baudrate: int = 9600,
     wait_serial=False,
     verbose: bool = False,
-    debug: bool = False,
+    debug: bool = DEBUG,
     wait_before_read: float = 0.1,
 ) -> str | None:
     """Sends a string to serial port and returns the response."""
@@ -105,7 +105,7 @@ def serial_batched(
     cmds: list,
     port: str,
     verbose: bool = True,
-    debug: bool = False,
+    debug: bool = DEBUG,
     send_ind: bool = False,
     wait_between_cmds: float = 0.1,
     check_errors: bool = True,
@@ -117,17 +117,17 @@ def serial_batched(
 
     if any("?" in _str for _str in cmds) or send_ind:
         for cmd in cmds:
-            res = serial_query(cmd, port, verbose=verbose, debug=DEBUG)
+            res = serial_query(cmd, port, verbose=verbose, debug=debug)
             if check_errors:
                 time.sleep(wait_between_cmds)
-                check_inst_errors(port, verbose=verbose)
+                check_inst_errors(port, verbose=verbose, debug=debug)
             time.sleep(wait_between_cmds)
     else:
         batch_cmd = ";".join(cmds)
-        res = serial_query(batch_cmd, port, verbose=verbose, debug=DEBUG)
+        res = serial_query(batch_cmd, port, verbose=verbose, debug=debug)
         if check_errors:
             time.sleep(wait_between_cmds)
-            check_inst_errors(port, verbose=verbose)
+            check_inst_errors(port, verbose=verbose, debug=debug)
         time.sleep(wait_between_cmds)
     return res
 
@@ -136,7 +136,7 @@ def query_and_check(
     cmd: str,
     port: str,
     verbose: bool = True,
-    debug: bool = False,
+    debug: bool = DEBUG,
     wait_between_cmds: float = 0.1,
     check_errors: bool = True,
 ) -> str | None:
@@ -145,24 +145,24 @@ def query_and_check(
     Commands that are queries or contain read-like tokens are sent individually.
     """
 
-    _res = serial_query(cmd, port, verbose=verbose, debug=DEBUG)
+    _res = serial_query(cmd, port, verbose=verbose, debug=debug)
     if check_errors:
         time.sleep(wait_between_cmds)
-        check_inst_errors(port, verbose=verbose)
+        check_inst_errors(port, verbose=verbose, debug=debug)
         time.sleep(wait_between_cmds)
     return _res
 
 
-def check_inst_errors(port, verbose=True):
+def check_inst_errors(port, verbose=True, debug=DEBUG):
     """Query instrument error queue and print any errors."""
     while True:
-        err = serial_query(":SYST:ERR?", port, verbose=verbose, debug=DEBUG)
+        err = serial_query(":SYST:ERR?", port, verbose=verbose, debug=debug)
         if err is None or err.startswith("0,"):
             break
         print_verbose(f"[INSTR ERROR] {err}", verbose=verbose, timestamp=True, color="red", bold=True)
 
 
-def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=False, debug=False) -> list[dict] | None:
+def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=False, debug=DEBUG) -> list[dict] | None:
     """
     Scans all available serial ports and attempts to identify Keithley 6514 instruments.
 
@@ -173,16 +173,16 @@ def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=Fa
     """
     found_devices = []
     ports = serial.tools.list_ports.comports()
-    print_verbose(f"[INFO] Detected {len(ports)} serial ports to scan.", debug, timestamp=True)
-    print_verbose(f"[DEBUG] : {ports = }", debug)
+    print_verbose(f"[INFO] Detected {len(ports)} serial ports to scan.", verbose, timestamp=True)
+    print_verbose(f"[DEBUG] : {ports = }", debug, timestamp=True)
 
     common_baudrates = [9600, 19200, 38400, 57600, 115200]
 
-    print_verbose("[DEBUG] : Loop ports and baudrates", debug)
+    print_verbose("[INFO] : Loop ports and baudrates", verbose)
     for port in ports:
         baudrate_list = [baudrate] if baudrate is not None else common_baudrates
 
-        print_verbose(f"[DEBUG] : {port.device = }", debug)
+        print_verbose(f"[INFO] : Checking {port.device = }", verbose)
         for br in baudrate_list:
             try:
                 # with serial.Serial(port.device, baudrate=br, timeout=timeout) as ser:
@@ -295,7 +295,7 @@ def print_keithley_properties(dev):
     print("-" * 100, "\n")
 
 
-def reset_instrument(port, verbose=True, debug=True):
+def reset_instrument(port, verbose=True, debug=DEBUG):
     """Reset instrument to a known state."""
     print_verbose("[INFO] Resetting instrument...", color="purple", verbose=verbose)
     _start_t = time.time()
@@ -304,7 +304,7 @@ def reset_instrument(port, verbose=True, debug=True):
         ":SYST:REM",  # Remote mode for faster serial response; comment out if you want to use front panel after this
         ":FORM:ELEM READ,TIME",  # Set Format.
     ]  # Reset to known state, then remote mode for faster serial response
-    serial_batched(cmds, port, verbose=verbose, debug=DEBUG)
+    serial_batched(cmds, port, verbose=verbose, debug=debug)
     print_verbose(
         f"[INFO] Reset complete. Time elapsed: {time.time() - _start_t:.2f} s", color="purple", verbose=verbose
     )
@@ -312,7 +312,7 @@ def reset_instrument(port, verbose=True, debug=True):
     return True
 
 
-def is_autorange_ON(port, verbose=True, debug=True) -> bool:
+def is_autorange_ON(port, verbose=True, debug=DEBUG) -> bool:
     """Query autorange status."""
 
     print_verbose(
@@ -322,7 +322,7 @@ def is_autorange_ON(port, verbose=True, debug=True) -> bool:
         color="purple",
     )
 
-    _resp = query_and_check(":SENS:CURR:RANG:AUTO?", port, verbose=verbose, debug=True)
+    _resp = query_and_check(":SENS:CURR:RANG:AUTO?", port, verbose=verbose, debug=debug)
     autorange_status = _resp.strip() if _resp is not None else None
 
     if autorange_status is not None and autorange_status == "0":
@@ -333,25 +333,25 @@ def is_autorange_ON(port, verbose=True, debug=True) -> bool:
         return True
 
 
-def set_autorange(port, enable=True, verbose=True, debug=True):
+def set_autorange(port, enable=True, verbose=True, debug=DEBUG):
     """Enable or disable autorange."""
     if enable:
         print_verbose("[INFO] Enabling autorange...", color="purple", verbose=verbose)
-        serial_batched([":SENS:CURR:RANG:AUTO ON"], port, verbose=verbose, debug=DEBUG)
+        serial_batched([":SENS:CURR:RANG:AUTO ON"], port, verbose=verbose, debug=debug)
     else:
         print_verbose("[INFO] Disabling autorange...", color="purple", verbose=verbose)
-        serial_batched([":SENS:CURR:RANG:AUTO OFF"], port, verbose=verbose, debug=DEBUG)
+        serial_batched([":SENS:CURR:RANG:AUTO OFF"], port, verbose=verbose, debug=debug)
 
     return is_autorange_ON(port, verbose=verbose, debug=debug)
 
 
-def get_curr_range(port, verbose=True, debug=True) -> float:
+def get_curr_range(port, verbose=True, debug=DEBUG) -> float:
     """Query current range."""
     if is_autorange_ON(port, verbose=verbose, debug=debug):
         return -9999.00  # sentinel value to indicate autorange is ON and numeric range is not fixed
     else:
         print_verbose("[INFO] Autorange is OFF, querying current range...", color="purple", verbose=verbose)
-        _resp = query_and_check(":SENS:CURR:RANG?", port, verbose=verbose, debug=DEBUG)
+        _resp = query_and_check(":SENS:CURR:RANG?", port, verbose=verbose, debug=debug)
         if _resp is None:
             print_verbose(
                 "[WARNING] Received empty response when querying current range. Returning None.",
@@ -364,10 +364,10 @@ def get_curr_range(port, verbose=True, debug=True) -> float:
         return curr_range
 
 
-def get_curr_NPLC(port, verbose=True, debug=True) -> float:
+def get_curr_NPLC(port, verbose=True, debug=DEBUG) -> float:
     """Query current NPLC."""
     print_verbose("[INFO] Querying current NPLC...", color="purple", verbose=verbose)
-    _resp = query_and_check(":SENS:CURR:NPLC?", port, verbose=verbose, debug=DEBUG)
+    _resp = query_and_check(":SENS:CURR:NPLC?", port, verbose=verbose, debug=debug)
     if _resp is None:
         print_verbose(
             "[WARNING] Received empty response when querying current NPLC. Returning None.",
@@ -380,7 +380,7 @@ def get_curr_NPLC(port, verbose=True, debug=True) -> float:
     return curr_nplc
 
 
-def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=True) -> tuple[float, float]:
+def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=DEBUG) -> tuple[float, float]:
     """
     Enable autorange briefly so the instrument selects a range, read one measurement,
     query the selected range, then lock it and return numeric range.
@@ -395,7 +395,7 @@ def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=True) -> 
         ":SYST:AZERO OFF",  # turn off autozero for faster readings
         ":SENS:AVER:STAT 0",  # turn off averaging for faster readings
     ]
-    serial_batched(cmds, port, verbose=verbose, debug=DEBUG)
+    serial_batched(cmds, port, verbose=verbose, debug=debug)
 
     if set_curr_range is None:
         print_verbose(
@@ -425,7 +425,7 @@ def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=True) -> 
     else:
         raise ValueError(f"Invalid curr_range value: {set_curr_range}, type {type(set_curr_range)}")
 
-    serial_batched(cmds, port, verbose=verbose, debug=DEBUG)
+    serial_batched(cmds, port, verbose=verbose, debug=debug)
 
     # Perform a single read to let instrument choose range
     _t_read_start = time.time()
@@ -444,7 +444,7 @@ def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=True) -> 
             wait_between_cmds=1.0,  # wait longer after :READ? to give instrument time to process and update range if needed
             check_errors=False,
             verbose=verbose,
-            debug=DEBUG,
+            debug=debug,
         )
 
         if _ans is not None:
@@ -465,14 +465,14 @@ def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=True) -> 
             timestamp=True,
             color="purple",
         )
-        serial_batched([":SENS:CURR:RANGE:AUTO OFF"], port, verbose=verbose, debug=DEBUG)
+        serial_batched([":SENS:CURR:RANGE:AUTO OFF"], port, verbose=verbose, debug=debug)
 
     # Query the selected numeric range
     print_verbose(
         "[INFO] Querying Range and NPLC selected by INSTRUMENT...", verbose=verbose, timestamp=True, color="purple"
     )
 
-    rng_val = get_curr_range(port, verbose=verbose, debug=DEBUG)
+    rng_val = get_curr_range(port, verbose=verbose, debug=debug)
 
     if rng_val > 0.0:  # check if autorange is still ON based on sentinel value
         print_verbose(
@@ -490,7 +490,7 @@ def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=True) -> 
         )
         raise RuntimeError("Autorange should be OFF after range selection, but query indicates it is still ON.")
 
-    nplc_val = get_curr_NPLC(port, verbose=verbose, debug=DEBUG)
+    nplc_val = get_curr_NPLC(port, verbose=verbose, debug=debug)
 
     print_verbose(
         "[INFO] Autorange selection complete. Time elapsed: {:.2f} s".format(time.time() - _start_t),
@@ -505,6 +505,7 @@ def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=True) -> 
 def zero_instrument(
     port,
     verbose=True,
+    debug=DEBUG,
 ):
     """
     If curr_range is None, auto-select range first. Then take one zero reading
@@ -523,7 +524,7 @@ def zero_instrument(
         ":SYST:ZCOR ON",
     ]
 
-    serial_batched(cmds, port, verbose=verbose, debug=DEBUG, check_errors=True)
+    serial_batched(cmds, port, verbose=verbose, debug=debug, check_errors=True)
 
     t_read = time.time()
 
@@ -534,7 +535,7 @@ def zero_instrument(
             wait_between_cmds=1.0,  # wait longer after :READ? to give instrument time to process and update range if needed
             check_errors=False,
             verbose=verbose,
-            debug=DEBUG,
+            debug=debug,
         )
         if resp is not None:
             break
@@ -545,8 +546,6 @@ def zero_instrument(
             timestamp=True,
             color="purple",
         )
-
-    print_verbose(f"[DEBUG] Final :READ? completed in {time.time() - t_read:.3f}s", verbose=DEBUG, timestamp=True)
 
     if resp is not None and "A" in resp:
         zero_val = resp.strip().replace("A", "")
@@ -576,7 +575,7 @@ def zero_instrument(
     return zero_val
 
 
-def setup_read_acquisition(port, points_for_stat=1, verbose=True, debug=True):
+def setup_read_acquisition(port, points_for_stat=1, verbose=True, debug=DEBUG):
     """
     Prepare instrument for single-point acquisition with timestamps.
     """
@@ -594,7 +593,7 @@ def setup_read_acquisition(port, points_for_stat=1, verbose=True, debug=True):
     # ▪ Buffer operation is disabled. A storage operation presently in process will be aborted.
     # ▪ Autozero is enabled.
 
-    serial_batched([":CONF:CURR;:CONF?"], port, verbose=verbose, debug=DEBUG)
+    serial_batched([":CONF:CURR;:CONF?"], port, verbose=verbose, debug=debug)
 
     print_verbose(
         f"[INFO] Single-point acquisition setup complete. Time elapsed: {time.time() - _start_t:.2f} s",
@@ -604,7 +603,7 @@ def setup_read_acquisition(port, points_for_stat=1, verbose=True, debug=True):
     return True
 
 
-def setup_waveform_acquisition(port, num_points=60, verbose=True, debug=True):
+def setup_waveform_acquisition(port, num_points=60, verbose=True, debug=DEBUG):
     """
     Prepare instrument for buffered waveform acquisition with timestamps.
     """
@@ -620,7 +619,7 @@ def setup_waveform_acquisition(port, num_points=60, verbose=True, debug=True):
         ":TRAC:FEED SENS",  # Store raw input readings (as opposed to calculated values like avg and max/min).
         ":TRAC:FEED:CONT NEXT",  # `NEXT` Enables the buffer. `NEVer disable it.
     ]
-    serial_batched(setup_recipe, port, verbose=verbose, debug=DEBUG)
+    serial_batched(setup_recipe, port, verbose=verbose, debug=debug)
 
     print_verbose(
         f"[INFO] Waveform acquisition setup complete. Time elapsed: {time.time() - _start_t:.2f} s",
@@ -631,11 +630,10 @@ def setup_waveform_acquisition(port, num_points=60, verbose=True, debug=True):
     return True
 
 
-def acq_read(port, verbose=True, debug=True):
+def acq_read(port, verbose=True, debug=DEBUG):
     t_read = time.time()
 
-    resp = query_and_check(":READ?", port, verbose=verbose, debug=DEBUG)
-    print_verbose(f"[DEBUG] Final :READ? completed in {time.time() - t_read:.3f}s", verbose=debug, timestamp=True)
+    resp = query_and_check(":read?", port, verbose=verbose, debug=debug)
 
     if resp is None:
         print_verbose(
@@ -648,7 +646,7 @@ def acq_read(port, verbose=True, debug=True):
     return resp
 
 
-def acq_waveform(port, poll_interval=0.5, verbose=True, debug=True):
+def acq_waveform(port, poll_interval=0.5, verbose=True, debug=DEBUG):
     """
     Wait for buffer to fill then read buffered data (readings + timestamps).
     Returns raw response string from :TRAC:DATA?; caller should parse into values/times.
@@ -666,7 +664,7 @@ def acq_waveform(port, poll_interval=0.5, verbose=True, debug=True):
     _start_acq_time = time.time()
 
     # Arm acquisition
-    query_and_check(":INIT", port, verbose=verbose, debug=DEBUG)
+    query_and_check(":INIT", port, verbose=verbose, debug=debug)
 
     while True:
         resp = query_and_check(":TRAC:POIN:ACT?", port, verbose=True)
@@ -693,7 +691,7 @@ def acq_waveform(port, poll_interval=0.5, verbose=True, debug=True):
     )
 
     # Read all buffered readings and timestamps in one transfer
-    raw = query_and_check(":TRAC:DATA?", port, verbose=verbose, debug=DEBUG)
+    raw = query_and_check(":TRAC:DATA?", port, verbose=verbose, debug=debug)
 
     print_verbose(
         f"[INFO] Waveform acquisition complete. Data Download COMPLETED. Time elapsed: {time.time() - _start_total_time:.2f} s.",
@@ -705,7 +703,7 @@ def acq_waveform(port, poll_interval=0.5, verbose=True, debug=True):
 
 
 if __name__ == "__main__":
-    devs = detect_keithley_devices(baudrate=None, verbose=True, debug=False)
+    devs = detect_keithley_devices(baudrate=None, verbose=True, debug=DEBUG)
 
     if devs is None:
         print_verbose("[ERROR] : No Keithley devices found. Exiting.", verbose=True, timestamp=True)
@@ -714,6 +712,6 @@ if __name__ == "__main__":
     for dev in devs:
         if dev["is_keithley"]:
             print_keithley_properties(dev)
-            serial_query(":CONF?", dev["port"], verbose=True, debug=False)
-            read_res = serial_query(":READ?", dev["port"], verbose=True, debug=False)
+            serial_query(":CONF?", dev["port"], verbose=True, debug=DEBUG)
+            read_res = serial_query(":READ?", dev["port"], verbose=True, debug=DEBUG)
             print(f"[RESULT] Raw data length: {read_res.count(',') + 1} data points")  # type: ignore
