@@ -4,9 +4,10 @@ import time
 from datetime import datetime
 
 DEBUG = False
+FORCE_COLOR_OFF = False  # Set to True to disable ANSI color codes even if terminal supports them
 
 
-def _colorStr(s, color=None, bold=False):
+def _colorStr(s: str, color: str = "", bold: bool = False) -> str:
     """Return the string wrapped in ANSI color/bold escape codes.
 
     Args:
@@ -26,12 +27,15 @@ def _colorStr(s, color=None, bold=False):
         "cyan": "96",
     }
 
+    if FORCE_COLOR_OFF or color not in color_codes:
+        return s
+
     color_code = color_codes.get(color, "")  # type: ignore
     bold_code = "1;" if bold else ""
     return f"\033[{bold_code}{color_code}m{s}\033[0m"
 
 
-def print_verbose(msg, verbose=True, timestamp=False, color=None, bold=False):
+def print_verbose(msg: str, verbose: bool = True, timestamp: bool = False, color: str = "", bold: bool = False):
     """Print `msg` to stdout when `verbose` is True, with optional color and timestamp.
 
     Args:
@@ -45,7 +49,7 @@ def print_verbose(msg, verbose=True, timestamp=False, color=None, bold=False):
     if verbose:
         if timestamp:
             msg = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] : {msg}"
-        if color is not None or bold:
+        if color or bold:
             msg = _colorStr(msg, color=color, bold=bold)
         print(msg)
 
@@ -219,7 +223,7 @@ def query_and_check(
     return _res
 
 
-def close_serial_connection(port, verbose=True):
+def close_serial_connection(port: str, verbose: bool = True):
     """Attempt to close a serial connection on `port` if open.
 
     Args:
@@ -242,7 +246,7 @@ def close_serial_connection(port, verbose=True):
         )
 
 
-def check_inst_errors(port, verbose=True, debug=DEBUG):
+def check_inst_errors(port: str, verbose: bool = True, debug: bool = DEBUG):
     """Poll the instrument error queue and print any non-zero errors.
 
     Repeatedly queries `:SYST:ERR?` until the instrument reports `0,` (no error).
@@ -259,7 +263,9 @@ def check_inst_errors(port, verbose=True, debug=DEBUG):
         print_verbose(f"[INSTR ERROR] {err}", verbose=verbose, timestamp=True, color="red", bold=True)
 
 
-def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=False, debug=DEBUG) -> list[dict] | None:
+def detect_keithley_devices(
+    baudrate: int | None = 9600, timeout: float = 0.5, verbose: bool = False, debug: bool = DEBUG
+) -> list[dict] | None:
     """Scan available serial ports to identify Keithley instruments.
 
     For each detected port the function attempts to send `*IDN?` at the
@@ -344,7 +350,7 @@ def detect_keithley_devices(baudrate: int | None = 9600, timeout=0.5, verbose=Fa
     return found_devices if found_devices else None
 
 
-def print_keithley_devices(devices):
+def print_keithley_devices(devices: list[dict]):
     """Formats and prints the detected serial devices to the console."""
     if not devices:
         print_verbose("[INFO] *** No serial devices detected on available serial ports ***", timestamp=True)
@@ -381,7 +387,7 @@ def print_keithley_devices(devices):
     print("=" * 100, "\n")
 
 
-def print_keithley_properties(dev):
+def print_keithley_properties(dev: dict):
     """Prints the properties of a detected device in a readable format."""
 
     print("-" * 100)
@@ -400,7 +406,7 @@ def print_keithley_properties(dev):
     print("-" * 100, "\n")
 
 
-def reset_instrument(port, verbose=True, debug=DEBUG):
+def reset_instrument(port: str, verbose: bool = True, debug: bool = DEBUG):
     """Reset instrument to a known state."""
     print_verbose("[INFO] Resetting instrument...", color="purple", verbose=verbose)
     _start_t = time.time()
@@ -417,7 +423,7 @@ def reset_instrument(port, verbose=True, debug=DEBUG):
     return True
 
 
-def is_autorange_ON(port, verbose=True, debug=DEBUG) -> bool:
+def is_autorange_ON(port: str, verbose: bool = True, debug: bool = DEBUG) -> bool:
     """Query autorange status."""
 
     print_verbose(
@@ -438,7 +444,7 @@ def is_autorange_ON(port, verbose=True, debug=DEBUG) -> bool:
         return True
 
 
-def set_autorange(port, enable=True, verbose=True, debug=DEBUG):
+def set_autorange(port: str, enable: bool = True, verbose: bool = True, debug: bool = DEBUG) -> bool:
     """Enable or disable autorange."""
     if enable:
         print_verbose("[INFO] Enabling autorange...", color="purple", verbose=verbose)
@@ -450,7 +456,7 @@ def set_autorange(port, enable=True, verbose=True, debug=DEBUG):
     return is_autorange_ON(port, verbose=verbose, debug=debug)
 
 
-def get_curr_range(port, verbose=True, debug=DEBUG) -> float:
+def get_curr_range(port: str, verbose: bool = True, debug: bool = DEBUG) -> float:
     """Query current range."""
     if is_autorange_ON(port, verbose=verbose, debug=debug):
         return -9999.00  # sentinel value to indicate autorange is ON and numeric range is not fixed
@@ -469,7 +475,7 @@ def get_curr_range(port, verbose=True, debug=DEBUG) -> float:
         return curr_range
 
 
-def get_curr_NPLC(port, verbose=True, debug=DEBUG) -> float:
+def get_curr_NPLC(port: str, verbose: bool = True, debug: bool = DEBUG) -> float:
     """Query current NPLC."""
     print_verbose("[INFO] Querying current NPLC...", color="purple", verbose=verbose)
     _resp = query_and_check(":SENS:CURR:NPLC?", port, verbose=verbose, debug=debug)
@@ -485,7 +491,9 @@ def get_curr_NPLC(port, verbose=True, debug=DEBUG) -> float:
     return curr_nplc
 
 
-def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=DEBUG) -> tuple[float, float]:
+def set_range(
+    port: str, set_curr_range: float | None = None, nplc: float = 1.0, verbose: bool = True, debug: bool = DEBUG
+) -> tuple[float, float]:
     """
     Enable autorange briefly so the instrument selects a range, read one measurement,
     query the selected range, then lock it and return numeric range.
@@ -533,7 +541,6 @@ def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=DEBUG) ->
     serial_batched(cmds, port, verbose=verbose, debug=debug)
 
     # Perform a single read to let instrument choose range
-    _t_read_start = time.time()
 
     print_verbose(
         "[INFO] Performing initial read to let instrument choose range OR check overflow...",
@@ -608,9 +615,9 @@ def set_range(port, set_curr_range=None, nplc=1.0, verbose=True, debug=DEBUG) ->
 
 
 def zero_instrument(
-    port,
-    verbose=True,
-    debug=DEBUG,
+    port: str,
+    verbose: bool = True,
+    debug: bool = DEBUG,
 ):
     """
     If curr_range is None, auto-select range first. Then take one zero reading
@@ -630,8 +637,6 @@ def zero_instrument(
     ]
 
     serial_batched(cmds, port, verbose=verbose, debug=debug, check_errors=True)
-
-    t_read = time.time()
 
     while True:
         resp = query_and_check(
@@ -680,7 +685,7 @@ def zero_instrument(
     return zero_val
 
 
-def setup_read_acquisition(port, points_for_stat=1, verbose=True, debug=DEBUG):
+def setup_read_acquisition(port: str, points_for_stat: int = 1, verbose: bool = True, debug: bool = DEBUG):
     """
     Prepare instrument for single-point acquisition with timestamps.
     """
@@ -708,7 +713,7 @@ def setup_read_acquisition(port, points_for_stat=1, verbose=True, debug=DEBUG):
     return True
 
 
-def setup_waveform_acquisition(port, num_points=60, verbose=True, debug=DEBUG):
+def setup_waveform_acquisition(port: str, num_points: int = 60, verbose: bool = True, debug: bool = DEBUG):
     """
     Prepare instrument for buffered waveform acquisition with timestamps.
     """
@@ -735,8 +740,7 @@ def setup_waveform_acquisition(port, num_points=60, verbose=True, debug=DEBUG):
     return True
 
 
-def acq_read(port, verbose=True, debug=DEBUG):
-    t_read = time.time()
+def acq_read(port: str, verbose: bool = True, debug: bool = DEBUG):
 
     resp = query_and_check(":read?", port, verbose=verbose, debug=debug)
 
@@ -751,7 +755,7 @@ def acq_read(port, verbose=True, debug=DEBUG):
     return resp
 
 
-def acq_waveform(port, poll_interval=0.5, verbose=True, debug=DEBUG):
+def acq_waveform(port: str, poll_interval: float = 0.5, verbose: bool = True, debug: bool = DEBUG) -> str | None:
     """
     Wait for buffer to fill then read buffered data (readings + timestamps).
     Returns raw response string from :TRAC:DATA?; caller should parse into values/times.
@@ -796,7 +800,7 @@ def acq_waveform(port, poll_interval=0.5, verbose=True, debug=DEBUG):
     )
 
     # Read all buffered readings and timestamps in one transfer
-    raw = query_and_check(":TRAC:DATA?", port, verbose=verbose, debug=debug)
+    raw_waveform = query_and_check(":TRAC:DATA?", port, verbose=verbose, debug=debug)
 
     print_verbose(
         f"[INFO] Waveform acquisition complete. Data Download COMPLETED. Time elapsed: {time.time() - _start_total_time:.2f} s.",
@@ -804,7 +808,7 @@ def acq_waveform(port, poll_interval=0.5, verbose=True, debug=DEBUG):
         verbose=verbose,
     )
 
-    return raw
+    return raw_waveform
 
 
 if __name__ == "__main__":
