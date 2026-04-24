@@ -71,7 +71,8 @@ if __name__ == "__main__":
     # %% Setup Acquisition, Acquire Waveform, Parse Results
     # %% MAIN LOOP: Setup acquisition, acquire waveform, parse results
     num_points = 100
-    _sel_range = None
+    # _sel_range = None  # auto-range
+    _sel_range = 1e-9
     nplc = 1.0
 
     kthu.set_range(SERIALPORT, set_curr_range=_sel_range, nplc=nplc, verbose=True)
@@ -118,7 +119,7 @@ if __name__ == "__main__":
     plt.xlabel("Time (ms)")
     plt.ylabel("Current (A)")
     plt.grid()
-    plt.show()
+    plt.show(block=False)
 
     # %%
 
@@ -128,6 +129,6 @@ if __name__ == "__main__":
     plt.xlabel("Time (ms)")
     plt.ylabel("Time Diff from Expected (ms)")
     plt.grid()
-    plt.show()
+    plt.show(block=True)
 
 # %%

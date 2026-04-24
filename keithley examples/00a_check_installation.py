@@ -6,6 +6,7 @@ Simple script to verify the Keithley library installation and version.
 # %%
 import os
 import sys
+import time
 
 # This library
 # %%
