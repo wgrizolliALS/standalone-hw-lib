@@ -67,23 +67,23 @@ if __name__ == "__main__":
 
     # %% Setup Acquisition, Acquire Waveform, Parse Results
     # %% MAIN LOOP: Setup acquisition, acquire waveform, parse results
-    num_points = 10
+    num_points = 100
     # nplc = 1.0
     _df_list: list[pd.DataFrame] = []
 
     _start_t_main_loop = time.time()
 
     _sel_range_vals = [
-        3.0e-10,
+        # 3.0e-10,
         # 3.0e-9,
         # 3.0e-8,
         3.0e-7,
         # 3.0e-6,
         # 3.0e-5,
-        3.0e-4,
+        # 3.0e-4,
         # 3.0e-3,
     ]
-    nplc_vals = [10.0, 1.0, 0.1, 0.01]
+    nplc_vals = [0.1, 0.01]
     _step = 0
 
     for _sel_range in _sel_range_vals:
@@ -112,6 +112,7 @@ if __name__ == "__main__":
                 + f"{_step} of {len(_sel_range_vals) * len(nplc_vals)}."
                 + f" Time elapsed: {time.time() - _start_t_main_loop:.2f} s\n",
                 color="purple",
+                bold=True,
                 timestamp=False,
             )
 
@@ -124,13 +125,17 @@ if __name__ == "__main__":
     df["Time_msecs"] = df["Time_Secs"] * 1000
     df.to_csv("01b_keithley_waveform_data.csv", index=False, header=True)  # Save raw data to CSV for reference
 
-    # %%
+    kthu.print_verbose("DONE!", color="green", bold=True)
+
+    # %% Print some results summary
     kthu.print_verbose(f"[RESULTS] Acquired samples: {len(df)}", color="green")
 
     kthu.print_verbose("[RESULTS] Samples DataFrame Head 10:", color="green", bold=True)
     print(df.head(10))
     kthu.print_verbose("[RESULTS] Samples DataFrame info:", color="green", bold=True)
     print(df.info())
+    kthu.print_verbose("[RESULTS] Samples DataFrame describe:", color="green", bold=True)
+    print(df.describe())
 
     # %% Post Processing
 
@@ -198,6 +203,11 @@ if __name__ == "__main__":
     kthu.print_verbose(
         f"[RESULTS] Total execution time: {_total_t_end - _total_t_start:.4f} s", color="green", bold=True
     )
+
+    # %%
+
+    # df.loc[(df["NPLC"] == 0.01), "Time_msecs"].diff().to_list()
+
 
 # %% Some Results for reference:
 # [RESULTS] Dead Time Only DataFrame:
