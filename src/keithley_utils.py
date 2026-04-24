@@ -3,6 +3,8 @@ import serial.tools.list_ports
 import time
 from datetime import datetime
 
+import pandas as pd
+
 DEBUG = False
 FORCE_COLOR_OFF = False  # Set to True to disable ANSI color codes even if terminal supports them
 
@@ -810,6 +812,21 @@ def acq_waveform(port: str, poll_interval: float = 0.5, verbose: bool = True, de
     )
 
     return raw_waveform
+
+
+def parse_raw_waveform_data(raw):
+    """
+    Parse a comma-separated stream of READ,TIME,READ,TIME,... into lists.
+    Returns (reads: list[float], times: list[float_or_str]).
+    """
+    parts = [p.strip() for p in raw.strip().split(",") if p.strip() != ""]
+    reads, times = [], []
+    for i in range(0, len(parts), 2):
+        reads.append(float(parts[i]))
+    for i in range(0, len(parts), 2):
+        times.append(float(parts[i + 1]))
+    df = pd.DataFrame({"Current_Amps": reads, "Time_Secs": times})
+    return df
 
 
 if __name__ == "__main__":

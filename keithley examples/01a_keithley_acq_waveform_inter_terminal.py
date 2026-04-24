@@ -22,29 +22,6 @@ POWER_LINE_PERIOD = 1 / POWER_LINE_FREQ
 
 DEBUG = False
 
-
-# %%
-
-
-# Helper: parse TRAC:DATA? response formatted as READ,TIME into arrays
-def parse_trac_data(raw):
-    """
-    Parse a comma-separated stream of READ,TIME,READ,TIME,... into lists.
-    Returns (reads: list[float], times: list[float_or_str]).
-    """
-    parts = [p.strip() for p in raw.strip().split(",") if p.strip() != ""]
-    reads, times = [], []
-    for i in range(0, len(parts), 2):
-        reads.append(float(parts[i]))
-
-    for i in range(0, len(parts), 2):
-        times.append(float(parts[i + 1]))
-
-    df = pd.DataFrame({"Current_Amps": reads, "Time_Secs": times})
-
-    return df
-
-
 # %% Example usage in a __main__ block
 if __name__ == "__main__":
     pass
@@ -98,7 +75,7 @@ if __name__ == "__main__":
         f"[INFO] Acquisition Finished. Elapsed time: {time.time() - _total_t_start:.2f} s", color="purple", bold=True
     )
 
-    df = parse_trac_data(raw)
+    df = kthu.parse_raw_waveform_data(raw)
     df["NPLC"] = nplc
     df["Range"] = final_range
 
