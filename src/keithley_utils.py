@@ -703,7 +703,7 @@ def setup_read_acquisition(port: str, points_for_stat: int = 1, verbose: bool = 
     # ▪ Buffer operation is disabled. A storage operation presently in process will be aborted.
     # ▪ Autozero is enabled.
 
-    serial_batched([":CONF:CURR;:CONF?"], port, verbose=verbose, debug=debug)
+    serial_batched([":CONF:CURR;SYST:AZER ON;:CONF?"], port, verbose=verbose, debug=debug)
 
     print_verbose(
         f"[INFO] Single-point acquisition setup complete. Time elapsed: {time.time() - _start_t:.2f} s",
@@ -724,6 +724,7 @@ def setup_waveform_acquisition(port: str, num_points: int = 60, verbose: bool = 
     setup_recipe = [  # following pg 6-8 from manual
         # ":FORM:ELEM READ,TIME",
         # ":SENS:CURR:RANGE:AUTO OFF",
+        "SYST:AZER OFF",  # turn off autozero for faster readings; comment out if you want autozero between readings
         f":TRIG:COUNT {num_points}",  # single-trigger sampling for even spacing
         f":TRAC:POIN {num_points}",  # specify number of readings to store: 1 to 3000
         ":TRAC:FEED SENS",  # Store raw input readings (as opposed to calculated values like avg and max/min).
