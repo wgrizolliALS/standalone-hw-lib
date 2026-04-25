@@ -63,7 +63,7 @@ def serial_query(
     wait_serial=False,
     verbose: bool = False,
     debug: bool = DEBUG,
-    wait_before_read: float = 0.1,
+    wait_before_read: float = 0.05,
 ) -> str | None:
     """Send a command string to a serial device and read a single-line response.
 
@@ -151,7 +151,7 @@ def serial_batched(
     verbose: bool = True,
     debug: bool = DEBUG,
     send_ind: bool = False,
-    wait_between_cmds: float = 0.1,
+    wait_between_cmds: float = 0.05,
     check_errors: bool = True,
 ) -> str | None:
     """Send a list of serial commands either batched or individually.
@@ -196,7 +196,7 @@ def query_and_check(
     port: str,
     verbose: bool = True,
     debug: bool = DEBUG,
-    wait_between_cmds: float = 0.1,
+    wait_between_cmds: float = 0.05,
     check_errors: bool = True,
 ) -> str | None:
     """Send a single query command then optionally check the instrument error queue.
@@ -730,11 +730,11 @@ def setup_waveform_acquisition(port: str, num_points: int = 60, verbose: bool = 
         # ":FORM:ELEM READ,TIME",
         # ":SENS:CURR:RANGE:AUTO OFF",
         "SYST:AZER OFF",  # turn off autozero for faster readings; comment out if you want autozero between readings
-        # ":TRAC:CLE",  # clear buffer before starting acquisition
         f":TRIG:COUNT {num_points}",  # single-trigger sampling for even spacing
         f":TRAC:POIN {num_points}",  # specify number of readings to store: 1 to 3000
+        ":TRAC:CLE",  # clear buffer before starting acquisition
         ":TRAC:FEED SENS",  # Store raw input readings (as opposed to calculated values like avg and max/min).
-        ":TRAC:FEED:CONT NEXT",  # `NEXT` Enables the buffer. `NEVer disable it.
+        # ":TRAC:FEED:CONT NEXT",  # `NEXT` Enables the buffer. `NEVer disable it. MOVED TO acq_waveform function to ensure it's armed right before acquisition starts
     ]
     serial_batched(setup_recipe, port, verbose=verbose, debug=debug)
 
@@ -762,7 +762,7 @@ def acq_read(port: str, verbose: bool = True, debug: bool = DEBUG):
     return resp
 
 
-def acq_waveform(port: str, poll_interval: float = 0.5, verbose: bool = True, debug: bool = DEBUG) -> str | None:
+def acq_waveform(port: str, poll_interval: float = 0.01, verbose: bool = True, debug: bool = DEBUG) -> str | None:
     """
     Wait for buffer to fill then read buffered data (readings + timestamps).
     Returns raw response string from :TRAC:DATA?; caller should parse into values/times.
@@ -780,7 +780,8 @@ def acq_waveform(port: str, poll_interval: float = 0.5, verbose: bool = True, de
     _start_acq_time = time.time()
 
     # Arm acquisition
-    query_and_check(":TRAC:FEED:CONT NEXT;:INIT", port, verbose=verbose, debug=debug)
+    query_and_check(":TRAC:CLE;:TRAC:FEED:CONT NEXT;:INIT", port, verbose=verbose, debug=debug)
+    # notethat `:TRAC:FEED:CONT NEXT` enables the buffer and needs to be sent right before acquisition starts. After running `:INIT`, the buffer will change to back to `:TRAC:FEED:CONT NEVER`, and needs to be re-enabled before the next acquisition . If you dont do this, no new data will be stored in the buffer and subsequent queries to `:TRAC:DATA?` will return the same data until you re-enable the buffer with `:TRAC:FEED:CONT NEXT`.
 
     # resp = "0"
     # while resp == "0":
@@ -811,8 +812,6 @@ def acq_waveform(port: str, poll_interval: float = 0.5, verbose: bool = True, de
     #     verbose=verbose,
     # )
 
-    _downl_time = time.time()
-
     # Read all buffered readings and timestamps in one transfer
 
     while True:
@@ -821,10 +820,24 @@ def acq_waveform(port: str, poll_interval: float = 0.5, verbose: bool = True, de
             color="purple",
             verbose=verbose,
         )
-        raw_waveform = query_and_check(":TRAC:DATA?", port, verbose=verbose, debug=debug)
-        if raw_waveform is not None:
+
+        # resp = query_and_check(":TRAC:POIN:ACT?", port, verbose=True)
+        # print(f"[DEBUG] : Current points in buffer: {resp}, {type(resp) = }")
+        opc_resp = query_and_check("*OPC?", port, verbose=debug, debug=debug)
+        # print_verbose(f"[DEBUG] : *OPC? response: {opc_resp}", verbose=True)
+        if opc_resp is not None:
             break
+
         time.sleep(poll_interval)
+
+    print_verbose(
+        f"[INFO] Acuisition COMPLETED. Start Download data... time elapsed: {time.time() - _start_acq_time:.2f}s",
+        color="purple",
+        verbose=verbose,
+    )
+    _downl_time = time.time()
+
+    raw_waveform = query_and_check(":TRAC:DATA?", port, verbose=verbose, debug=debug)
 
     print_verbose(
         f"[INFO] Buffer Download COMPLETED. Download time: {time.time() - _downl_time:.2f} s.",
