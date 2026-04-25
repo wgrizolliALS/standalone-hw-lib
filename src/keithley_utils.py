@@ -718,6 +718,9 @@ def setup_read_acquisition(port: str, points_for_stat: int = 1, verbose: bool = 
 def setup_waveform_acquisition(port: str, num_points: int = 60, verbose: bool = True, debug: bool = DEBUG):
     """
     Prepare instrument for buffered waveform acquisition with timestamps.
+    Sets up the internal buffer to store `num_points` readings with timestamps,
+    and configures the trigger model for single-trigger sampling to ensure
+    even spacing of readings.
     """
 
     print_verbose("[INFO] Setting up waveform acquisition...", color="purple", verbose=verbose)
@@ -727,6 +730,7 @@ def setup_waveform_acquisition(port: str, num_points: int = 60, verbose: bool = 
         # ":FORM:ELEM READ,TIME",
         # ":SENS:CURR:RANGE:AUTO OFF",
         "SYST:AZER OFF",  # turn off autozero for faster readings; comment out if you want autozero between readings
+        # ":TRAC:CLE",  # clear buffer before starting acquisition
         f":TRIG:COUNT {num_points}",  # single-trigger sampling for even spacing
         f":TRAC:POIN {num_points}",  # specify number of readings to store: 1 to 3000
         ":TRAC:FEED SENS",  # Store raw input readings (as opposed to calculated values like avg and max/min).
@@ -776,38 +780,62 @@ def acq_waveform(port: str, poll_interval: float = 0.5, verbose: bool = True, de
     _start_acq_time = time.time()
 
     # Arm acquisition
-    query_and_check(":INIT", port, verbose=verbose, debug=debug)
+    query_and_check(":TRAC:FEED:CONT NEXT;:INIT", port, verbose=verbose, debug=debug)
+
+    # resp = "0"
+    # while resp == "0":
+    #     resp = query_and_check(":TRAC:POIN:ACT?", port, verbose=True)
+    #     print(f"[DEBUG] : Current points in buffer: {resp}, {type(resp) = }")
+
+    #     print(f"[DEBUG] : {resp=='0' = }")
+    #     resp_opc = query_and_check("*OPC?", port, verbose=True)
+
+    #     # if resp is not None:
+    #     # break
+    #     print_verbose(
+    #         f"[INFO] Waiting for acquisition to complete... time elapsed: {time.time() - _start_acq_time:.2f}s",
+    #         color="purple",
+    #         verbose=verbose,
+    #     )
+    #     time.sleep(poll_interval)
+
+    # print_verbose(
+    #     f"[INFO] Acquisition COMPLETED... time elapsed: {time.time() - _start_acq_time:.2f}s",
+    #     color="purple",
+    #     verbose=verbose,
+    # )
+
+    # print_verbose(
+    #     "\n[INFO] Download data from instrument buffer...",
+    #     color="purple",
+    #     verbose=verbose,
+    # )
+
+    _downl_time = time.time()
+
+    # Read all buffered readings and timestamps in one transfer
 
     while True:
-        resp = query_and_check(":TRAC:POIN:ACT?", port, verbose=True)
-
-        if resp is not None:
-            break
         print_verbose(
             f"[INFO] Waiting for acquisition to complete... time elapsed: {time.time() - _start_acq_time:.2f}s",
             color="purple",
             verbose=verbose,
         )
+        raw_waveform = query_and_check(":TRAC:DATA?", port, verbose=verbose, debug=debug)
+        if raw_waveform is not None:
+            break
         time.sleep(poll_interval)
 
     print_verbose(
-        f"[INFO] Acquisition COMPLETED... time elapsed: {time.time() - _start_acq_time:.2f}s",
+        f"[INFO] Buffer Download COMPLETED. Download time: {time.time() - _downl_time:.2f} s.",
         color="purple",
         verbose=verbose,
     )
 
     print_verbose(
-        "\n[INFO] Download data from instrument...",
+        f"[INFO] Acquisition and Download Completed. TOTAL Time elapsed: {time.time() - _start_total_time:.2f} s",
         color="purple",
-        verbose=verbose,
-    )
-
-    # Read all buffered readings and timestamps in one transfer
-    raw_waveform = query_and_check(":TRAC:DATA?", port, verbose=verbose, debug=debug)
-
-    print_verbose(
-        f"[INFO] Waveform acquisition complete. Data Download COMPLETED. Time elapsed: {time.time() - _start_total_time:.2f} s.",
-        color="purple",
+        bold=True,
         verbose=verbose,
     )
 
